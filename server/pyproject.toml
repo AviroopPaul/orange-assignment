@@ -1,0 +1,59 @@
+[project]
+name = "errand-agent"
+version = "0.1.0"
+description = "Chat agent that arranges home-service errands"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic>=1.20,<2",
+    "asyncpg>=0.32,<1",
+    "fastapi>=0.133,<1",
+    "google-adk[db]==2.13.0",
+    "pydantic-settings>=2.6,<3",
+    "redis>=8.1,<9",
+    "sqlalchemy[asyncio]>=2.1,<3",
+    "taskiq==0.13.0",
+    "taskiq-redis==1.2.4",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.21",
+    "fakeredis[lua]>=2.26",
+    "httpx>=0.28",
+    "import-linter>=2.1",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["integration: needs real PostgreSQL and Redis (make test-integration)"]
+addopts = "-m 'not integration'"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+known-first-party = ["app", "tests"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+ignore_missing_imports = true
+check_untyped_defs = true

@@ -1,0 +1,32 @@
+[importlinter]
+root_package = app
+include_external_packages = True
+
+[importlinter:contract:core-is-independent]
+name = core does not import domains
+type = forbidden
+source_modules = app.core
+forbidden_modules = app.domains
+
+[importlinter:contract:adk-stays-in-agent]
+name = only the agent domain imports ADK
+type = forbidden
+source_modules =
+    app.core
+    app.domains.chat
+    app.domains.jobs
+    app.domains.system
+    app.domains.tracing
+forbidden_modules =
+    google
+    app.domains.agent
+
+[importlinter:contract:jobs-are-generic]
+name = the jobs domain knows no other domain
+type = forbidden
+source_modules = app.domains.jobs
+forbidden_modules =
+    app.domains.agent
+    app.domains.chat
+    app.domains.system
+    app.domains.tracing

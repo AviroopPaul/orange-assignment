@@ -1,0 +1,133 @@
+name: errand-agent
+
+x-server: &server
+  build:
+    context: ./server
+    target: runtime
+  image: errand-agent-server
+  environment: &server-env
+    ERRAND_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/errand
+    ADK_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/adk_sessions
+    REDIS_URL: redis://redis:6379/0
+    GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    MODEL_NAME: ${MODEL_NAME:-gemini-3.5-flash-lite}
+    MODEL_MODE: ${MODEL_MODE:-live}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: errand
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-errand}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./server/docker/postgres/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U errand -d adk_sessions"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    mem_limit: 512m
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    mem_limit: 128m
+    restart: unless-stopped
+
+  migrate:
+    <<: *server
+    command: ["python", "-m", "app.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: "no"
+
+  api:
+    <<: *server
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    mem_limit: 768m
+    restart: unless-stopped
+
+  worker:
+    <<: *server
+    command: ["taskiq", "worker", "app.worker:broker", "--workers", "1"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "worker"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    mem_limit: 384m
+    restart: unless-stopped
+
+  scheduler:
+    <<: *server
+    command: ["taskiq", "scheduler", "app.scheduler:scheduler"]
+    depends_on:
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "scheduler"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 25s
+    mem_limit: 256m
+    restart: unless-stopped
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: ./server
+      target: test
+    image: errand-agent-server-test
+    command: ["pytest", "-m", "integration", "-o", "addopts=", "-v"]
+    environment:
+      ERRAND_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/errand_test
+      ADK_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/adk_sessions_test
+      REDIS_URL: redis://redis:6379/1
+      MODEL_MODE: scripted
+      GOOGLE_API_KEY: ""
+      BROKER_QUEUE_NAME: errand.jobs.test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:

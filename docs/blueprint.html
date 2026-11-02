@@ -1,0 +1,592 @@
+<title>Errand Agent Blueprint</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column with wide evidence tables. Colour encodes trust: blue is our code, amber is model output, green is storage, violet is the mock provider. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --ink: #15212b; --muted: #55656f; --line: #d4dce2;
+  --trust: #1c5a93; --trust-soft: #e3eef8;
+  --risk: #9a5200; --risk-soft: #fbefdc;
+  --store: #24664f; --store-soft: #e0f1ea;
+  --ext: #545a86; --ext-soft: #ebecf6;
+  --bad: #a3322a; --bad-soft: #fbe7e4;
+  --sans: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10171d; --surface: #18222a; --ink: #e7eef3; --muted: #9fb1bd; --line: #2e3e4a;
+    --trust: #80baf0; --trust-soft: #16303f;
+    --risk: #f0b264; --risk-soft: #38280f;
+    --store: #78d0b3; --store-soft: #12322a;
+    --ext: #b6baea; --ext-soft: #252845;
+    --bad: #f19a90; --bad-soft: #3c1a17;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10171d; --surface: #18222a; --ink: #e7eef3; --muted: #9fb1bd; --line: #2e3e4a;
+  --trust: #80baf0; --trust-soft: #16303f;
+  --risk: #f0b264; --risk-soft: #38280f;
+  --store: #78d0b3; --store-soft: #12322a;
+  --ext: #b6baea; --ext-soft: #252845;
+  --bad: #f19a90; --bad-soft: #3c1a17;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font: 15.5px/1.55 var(--sans); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 36px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 44px; }
+.wrap > * { min-width: 0; }
+header { display: grid; gap: 10px; }
+.eyebrow { font: 500 12px/1.4 var(--mono); letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.1; margin: 0; font-weight: 700; letter-spacing: -.02em; text-wrap: balance; }
+h2 { font-size: 23px; line-height: 1.25; margin: 0; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+h3 { font-size: 16px; margin: 0; font-weight: 600; }
+p { margin: 0; max-width: 72ch; }
+.lede { font-size: 17px; color: var(--muted); }
+section { display: grid; gap: 16px; }
+section > * { min-width: 0; }
+nav { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+a { color: var(--trust); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--trust); outline-offset: 2px; }
+code { font: 500 .86em var(--mono); overflow-wrap: anywhere; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th { text-align: left; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; }
+th, td { padding: 10px 14px; vertical-align: top; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+td.id { font: 500 12.5px var(--mono); color: var(--muted); white-space: nowrap; }
+td.req { font-weight: 600; min-width: 170px; }
+td.how { min-width: 340px; }
+td.proof { font: 500 12.5px var(--mono); color: var(--muted); min-width: 90px; }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; white-space: nowrap; }
+.ok { background: var(--store-soft); color: var(--store); }
+.warn { background: var(--risk-soft); color: var(--risk); }
+.no { background: var(--bad-soft); color: var(--bad); }
+.info { background: var(--trust-soft); color: var(--trust); }
+ul.b { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 76ch; }
+.key { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13.5px; color: var(--muted); }
+.key span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { width: 13px; height: 13px; border-radius: 3px; border: 1.5px solid; display: inline-block; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.panel ul.b { font-size: 14.5px; }
+ol.flow { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+ol.flow li { font: 500 12.5px var(--mono); padding: 5px 10px; border-radius: 4px; background: var(--trust-soft); color: var(--trust); }
+ol.flow li + li::before { content: "\2192"; margin-right: 10px; margin-left: -2px; color: var(--muted); }
+ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+ol.steps li { counter-increment: s; display: grid; grid-template-columns: 30px 62px minmax(0, 1fr); gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 14.5px; align-items: baseline; }
+ol.steps li:last-child { border-bottom: 0; }
+ol.steps li::before { content: counter(s); font: 500 13px var(--mono); color: var(--muted); }
+.who { font-size: 11.5px; font-weight: 600; padding: 1px 0; border-radius: 99px; text-align: center; }
+.diagram { padding: 10px; }
+.diagram svg { display: block; width: 100%; min-width: 900px; height: auto; }
+svg text { font-family: var(--sans); fill: var(--ink); }
+svg .t { font-weight: 600; font-size: 14px; }
+svg .s { font-size: 12px; fill: var(--muted); }
+svg .m { font-family: var(--mono); font-size: 11.5px; fill: var(--muted); }
+svg .c { font-family: var(--mono); font-size: 13px; font-weight: 500; fill: var(--ink); }
+svg .l { font-size: 11.5px; fill: var(--muted); font-weight: 500; }
+svg .trust { fill: var(--trust-soft); stroke: var(--trust); stroke-width: 1.4; }
+svg .risk { fill: var(--risk-soft); stroke: var(--risk); stroke-width: 1.4; }
+svg .zone { fill: none; stroke: var(--risk); stroke-width: 1.6; stroke-dasharray: 7 5; }
+svg .bound { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 4; }
+svg .store { fill: var(--store-soft); stroke: var(--store); stroke-width: 1.4; }
+svg .cell { fill: var(--surface); stroke: var(--store); stroke-width: 1; }
+svg .ext { fill: var(--ext-soft); stroke: var(--ext); stroke-width: 1.4; }
+svg .plain { fill: var(--surface); stroke: var(--muted); stroke-width: 1.2; }
+svg .chip { fill: var(--surface); stroke: var(--trust); stroke-width: 1; }
+svg .gate { fill: var(--trust-soft); stroke: var(--trust); stroke-width: 2.4; }
+svg .ar { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+svg .ah { fill: var(--muted); }
+svg .zl { fill: var(--risk); font-weight: 600; font-size: 13px; }
+.rule { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--trust); padding: 12px 16px; max-width: 80ch; }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Orange assignment · Version 4 · Nothing built yet</div>
+  <h1>Errand Agent Blueprint</h1>
+  <p class="lede">The stack is FastAPI, PostgreSQL, Redis, Google ADK, Gemini and React, and one Docker Compose command runs it all. PostgreSQL holds all truth. Redis moves work between processes. The model can only read and propose.</p>
+  <p style="font-size:13.5px;color:var(--muted)">Checked on 2 Nov 2026 with throwaway tests on real PostgreSQL 17 and Redis 8 containers and live Gemini. The full Compose stack does not exist yet, so <code>make up</code> is untested. Limits and budgets on this page are proposals.</p>
+  <nav aria-label="Sections">
+    <a href="#stack">Stack</a><a href="#arch">Architecture</a><a href="#docker">Docker</a><a href="#redis">Redis rules</a><a href="#adk">ADK decision</a><a href="#flows">Core flows</a><a href="#functional">Functional</a><a href="#nfr">Non-functional</a><a href="#evals">Evals</a><a href="#deliver">Deliverables</a><a href="#decide">Your decisions</a>
+  </nav>
+</header>
+
+<section id="stack">
+  <h2>Stack</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Choice</th><th>Status</th><th>Role and reason</th></tr></thead>
+    <tbody>
+      <tr><td class="req">FastAPI</td><td><span class="pill ok">Decided</span></td><td class="how">Serves chat, approval, memory and trace routes, plus server-sent events (SSE). Async matches ADK. ADK 2.13 needs <code>fastapi&gt;=0.133,&lt;1</code>.</td></tr>
+      <tr><td class="req">PostgreSQL 17</td><td><span class="pill ok">Decided</span></td><td class="how">One server with 3 databases: <code>errand</code> (our truth), <code>adk_sessions</code> and <code>mock_provider</code>. Gives us row locks, partial unique indexes and <code>SKIP LOCKED</code>. ADK source maps PostgreSQL to <code>asyncpg</code> and uses row locks there. Alembic manages our schema.</td></tr>
+      <tr><td class="req">Redis 8</td><td><span class="pill ok">Decided</span></td><td class="how">Three jobs: job stream, pub/sub from worker to API, and the per-session turn lock. <a href="#redis">It is never the source of truth.</a></td></tr>
+      <tr><td class="req">Queue library</td><td><span class="pill info">Recommended</span></td><td class="how"><code>taskiq</code> with <code>RedisStreamBroker</code>. It is async and acknowledges jobs, and it installs alongside ADK 2.13 and <code>redis</code> 8.1. It reclaims a dead worker's job only when a new job arrives, <a href="#redis">so recovery does not depend on it</a>. I rejected <code>arq</code>: its README says maintenance only, and it installed an old 5.3.1 Redis client.</td></tr>
+      <tr><td class="req">Docker Compose</td><td><span class="pill ok">Decided</span></td><td class="how">One command starts every service. <a href="#docker">Details below.</a></td></tr>
+      <tr><td class="req">Tool gateway</td><td><span class="pill ok">Decided</span></td><td class="how">A library used by <code>api</code> and <code>worker</code>, not a network service. Every tool call passes through it, including invented tool names.</td></tr>
+      <tr><td class="req">Gemini</td><td><span class="pill ok">Decided</span></td><td class="how"><code>gemini-3.5-flash-lite</code>. All 12 direct test calls succeeded, in 0.6 s to 18.9 s, and a live tool loop ran in 1.5 s. Google's page lists a free tier and $0.30 input, $2.50 output per 1M tokens.</td></tr>
+      <tr><td class="req">Google ADK</td><td><span class="pill ok">Decided</span></td><td class="how">Pinned to 2.13.0, for the inner loop and transcript only. <a href="#adk">Details below.</a></td></tr>
+      <tr><td class="req">React + Vite</td><td><span class="pill ok">Decided</span></td><td class="how">Three panels: chat with approval card, live trace, memory list. nginx serves the build and proxies the API. We build it last. The demo needs it to show chat and trace side by side.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="arch">
+  <h2>Architecture</h2>
+  <p class="rule"><strong>The core rule:</strong> the model can read and propose. Only deterministic code can change a booking, and only after a user approval that the model cannot produce.</p>
+  <div class="scroll diagram">
+  <svg viewBox="0 0 1040 900" role="img" aria-label="Architecture. Docker Compose runs web, api, redis, scheduler, worker, mock-provider and postgres. The web container talks to api. The api holds the turn controller and the ADK zone. Approvals commit to PostgreSQL with an outbox row, then Redis carries the job to the worker, which runs the booking saga. The ADK zone and worker reach tools only through the tool gateway, which calls mock-provider. All state lives in PostgreSQL.">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker>
+    </defs>
+    <rect class="bound" x="8" y="8" width="1024" height="884" rx="8"/>
+    <text class="l" x="22" y="27">docker compose up: every box below starts with one command</text>
+
+    <rect class="plain" x="270" y="36" width="500" height="48" rx="5"/>
+    <text class="c" x="284" y="65">web</text>
+    <text class="s" x="520" y="65" text-anchor="middle">nginx, React build: chat, approval card, trace, memory</text>
+    <path class="ar" d="M400 84 V116" marker-start="url(#a)" marker-end="url(#a)"/>
+    <text class="l" x="410" y="104">HTTP + SSE</text>
+
+    <rect class="plain" x="60" y="116" width="570" height="354" rx="6"/>
+    <text class="c" x="76" y="137">api</text>
+    <rect class="trust" x="76" y="146" width="538" height="38" rx="4"/>
+    <text class="m" x="345" y="170" text-anchor="middle">FastAPI: /chat  /approvals/{id}  /memories  /runs/{id}/trace  /events</text>
+
+    <path class="ar" d="M171 184 V205" marker-end="url(#a)"/>
+    <rect class="trust" x="76" y="205" width="190" height="130" rx="5"/>
+    <text class="t" x="88" y="227">Turn controller</text>
+    <text class="s" x="88" y="248">Reads raw message first</text>
+    <text class="s" x="88" y="268">Strict confirmation check</text>
+    <text class="s" x="88" y="288">Workflow state machine</text>
+    <text class="s" x="88" y="308">Run limits, final outcome</text>
+    <path class="ar" d="M266 270 H330" marker-end="url(#a)"/>
+    <text class="l" x="298" y="262" text-anchor="middle">otherwise</text>
+    <path class="ar" d="M171 335 V375" marker-end="url(#a)"/>
+    <text class="l" x="181" y="360">valid approval</text>
+    <rect class="trust" x="76" y="375" width="190" height="80" rx="5"/>
+    <text class="t" x="88" y="397">Approval commit</text>
+    <text class="s" x="88" y="418">Approval, attempt and</text>
+    <text class="s" x="88" y="438">outbox in one transaction</text>
+
+    <rect class="zone" x="330" y="195" width="286" height="260" rx="7"/>
+    <text class="zl" x="344" y="215">ADK zone: model only proposes</text>
+    <rect class="trust" x="344" y="225" width="258" height="56" rx="5"/>
+    <text class="t" x="356" y="248">ContextAssembler</text>
+    <text class="s" x="356" y="268">Runs in before_model_callback</text>
+    <path class="ar" d="M473 281 V299" marker-end="url(#a)"/>
+    <rect class="plain" x="344" y="299" width="258" height="50" rx="5"/>
+    <text class="t" x="356" y="320">Runner + LlmAgent</text>
+    <text class="s" x="356" y="339">inner tool loop</text>
+    <path class="ar" d="M473 349 V369" marker-start="url(#a)" marker-end="url(#a)"/>
+    <rect class="risk" x="344" y="369" width="258" height="74" rx="5"/>
+    <text class="t" x="356" y="390">Gemini 3.5 Flash-Lite</text>
+    <text class="s" x="356" y="410">ScriptedLlm in evals (BaseLlm swap)</text>
+    <text class="s" x="356" y="429">All output is untrusted</text>
+    <path class="ar" d="M473 455 V530" marker-end="url(#a)"/>
+    <text class="l" x="483" y="504">reads, propose_*, invented names</text>
+
+    <rect class="store" x="655" y="220" width="120" height="190" rx="5"/>
+    <text class="c" x="669" y="243">redis</text>
+    <text class="s" x="669" y="267">Job stream</text>
+    <text class="s" x="669" y="288">Pub/sub</text>
+    <text class="s" x="669" y="309">Turn lock</text>
+    <text class="s" x="669" y="350">Never the source</text>
+    <text class="s" x="669" y="370">of truth</text>
+    <path class="ar" d="M630 300 H655" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path class="ar" d="M775 300 H800" marker-start="url(#a)" marker-end="url(#a)"/>
+
+    <rect class="plain" x="800" y="116" width="190" height="84" rx="6"/>
+    <text class="c" x="814" y="138">scheduler</text>
+    <text class="s" x="814" y="160">Provider polls, outbox</text>
+    <text class="s" x="814" y="180">and attempt sweeps</text>
+    <path class="ar" d="M800 156 H715 V220" marker-end="url(#a)"/>
+    <text class="l" x="722" y="148">enqueue</text>
+
+    <rect class="plain" x="800" y="215" width="190" height="295" rx="6"/>
+    <text class="c" x="814" y="237">worker</text>
+    <rect class="trust" x="812" y="247" width="166" height="118" rx="5"/>
+    <text class="t" x="822" y="269">Booking saga</text>
+    <text class="s" x="822" y="290">Write intent, call, verify</text>
+    <text class="s" x="822" y="310">Only caller of book,</text>
+    <text class="s" x="822" y="330">cancel, reschedule</text>
+    <rect class="trust" x="812" y="377" width="166" height="120" rx="5"/>
+    <text class="t" x="822" y="399">Background jobs</text>
+    <text class="s" x="822" y="420">Detect provider cancels</text>
+    <text class="s" x="822" y="440">Recover open attempts</text>
+    <text class="s" x="822" y="460">Publish outbox</text>
+    <text class="s" x="822" y="480">Notify the user</text>
+    <path class="ar" d="M895 510 V530" marker-end="url(#a)"/>
+    <text class="l" x="885" y="525" text-anchor="end">side effect + approval token</text>
+
+    <rect class="gate" x="60" y="530" width="930" height="92" rx="5"/>
+    <text class="t" x="525" y="551" text-anchor="middle">Tool gateway: library in api and worker, the only path to any tool</text>
+    <g>
+      <rect class="chip" x="75" y="562" width="143" height="46" rx="4"/><text class="s" x="146" y="590" text-anchor="middle">Allowlist + schema</text>
+      <rect class="chip" x="226" y="562" width="143" height="46" rx="4"/><text class="s" x="297" y="590" text-anchor="middle">Caller rights</text>
+      <rect class="chip" x="377" y="562" width="143" height="46" rx="4"/><text class="s" x="448" y="590" text-anchor="middle">Approval hash</text>
+      <rect class="chip" x="528" y="562" width="143" height="46" rx="4"/><text class="s" x="599" y="590" text-anchor="middle">Budget count</text>
+      <rect class="chip" x="679" y="562" width="143" height="46" rx="4"/><text class="s" x="750" y="590" text-anchor="middle">Retry + timeout</text>
+      <rect class="chip" x="830" y="562" width="143" height="46" rx="4"/><text class="s" x="901" y="590" text-anchor="middle">Sanitize + trace</text>
+    </g>
+
+    <path class="ar" d="M545 622 V660" marker-end="url(#a)"/>
+    <text class="l" x="555" y="646">fixed tool contract over HTTP</text>
+    <rect class="ext" x="300" y="660" width="490" height="76" rx="5"/>
+    <text class="c" x="316" y="682">mock-provider</text>
+    <text class="s" x="316" y="703">8 contract tools, seeded outcomes, scenario config,</text>
+    <text class="s" x="316" y="722">injectable clock, simulated provider cancellations</text>
+    <path class="ar" d="M545 736 V780" marker-end="url(#a)"/>
+
+    <path class="ar" d="M60 420 H34 V780" marker-end="url(#a)"/>
+    <text class="l" transform="translate(28 620) rotate(-90)" text-anchor="middle">workflow, memory, transcript</text>
+    <path class="ar" d="M990 460 H1012 V780" marker-end="url(#a)"/>
+    <text class="l" transform="translate(1007 650) rotate(90)" text-anchor="middle">attempts, traces</text>
+
+    <rect class="store" x="20" y="780" width="1000" height="100" rx="5"/>
+    <text class="c" x="36" y="801">postgres</text>
+    <rect class="cell" x="36" y="810" width="430" height="60" rx="4"/>
+    <text class="t" x="46" y="827">errand (source of truth)</text>
+    <text class="s" x="46" y="846">workflows, approvals, booking_attempts, memories, outbox,</text>
+    <text class="s" x="46" y="862">turn_view, context_log, trace_events, notifications</text>
+    <rect class="cell" x="476" y="810" width="190" height="60" rx="4"/>
+    <text class="t" x="486" y="835">mock_provider</text>
+    <text class="s" x="486" y="856">the provider's world</text>
+    <rect class="cell" x="676" y="810" width="330" height="60" rx="4"/>
+    <text class="t" x="686" y="835">adk_sessions</text>
+    <text class="s" x="686" y="856">ADK-owned transcript, written only by api</text>
+  </svg>
+  </div>
+  <div class="key">
+    <span><i class="sw" style="background:var(--trust-soft);border-color:var(--trust)"></i>Our deterministic code</span>
+    <span><i class="sw" style="background:var(--risk-soft);border-color:var(--risk)"></i>Untrusted model output</span>
+    <span><i class="sw" style="background:var(--surface);border-color:var(--muted)"></i>Container or framework</span>
+    <span><i class="sw" style="background:var(--store-soft);border-color:var(--store)"></i>Storage</span>
+    <span><i class="sw" style="background:var(--ext-soft);border-color:var(--ext)"></i>Mock provider</span>
+  </div>
+  <ul class="b">
+    <li><strong>Model tools:</strong> <code>search_providers</code>, <code>get_provider</code>, <code>list_bookings</code>, <code>get_booking_status</code>, <code>update_request</code>, <code>propose_booking</code>, <code>propose_cancel</code>, <code>propose_reschedule</code>, <code>propose_memory</code>.</li>
+    <li><strong>Code-only tools:</strong> <code>hold_slot</code> (called inside <code>propose_booking</code>), <code>book</code>, <code>cancel</code>, <code>reschedule</code>.</li>
+    <li><strong>Single agent:</strong> Guardrails live in code, so more agents would add model calls and cost without adding safety.</li>
+    <li><strong>Scale path:</strong> <code>api</code> and <code>worker</code> hold no state, so <code>--scale worker=3</code> works. <code>scheduler</code> stays at one copy. Database and Redis URLs come from the environment, so managed services can replace the containers later.</li>
+  </ul>
+</section>
+
+<section id="docker">
+  <h2>Docker: one-command run</h2>
+  <p class="rule"><code>make up</code> builds everything, starts it and waits for health checks. Then open <code>http://localhost:3000</code>. A reviewer needs only Docker and, for live chat, a Gemini key. Evals need no key.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Service</th><th>Runs</th><th>Starts after</th><th>Health check</th></tr></thead>
+    <tbody>
+      <tr><td class="req"><code>postgres</code></td><td class="how"><code>postgres:17-alpine</code>. An init script creates the 3 databases. Named volume.</td><td>Nothing</td><td><code>pg_isready</code></td></tr>
+      <tr><td class="req"><code>redis</code></td><td class="how"><code>redis:8-alpine</code> with append-only persistence. Named volume.</td><td>Nothing</td><td><code>redis-cli ping</code></td></tr>
+      <tr><td class="req"><code>migrate</code></td><td class="how">One-shot job: Alembic upgrades, then seeds 60 memories and a long prior chat. Safe to run again.</td><td>postgres healthy</td><td>Exits 0</td></tr>
+      <tr><td class="req"><code>mock-provider</code></td><td class="how">FastAPI with one route per contract tool. Scenario and clock routes exist only in eval mode.</td><td>migrate done</td><td><code>/healthz</code></td></tr>
+      <tr><td class="req"><code>api</code></td><td class="how">FastAPI with chat turns (ADK inside), approvals, memory, trace and SSE.</td><td>migrate done, redis, mock healthy</td><td><code>/readyz</code> checks PostgreSQL and Redis</td></tr>
+      <tr><td class="req"><code>worker</code></td><td class="how"><code>taskiq worker</code>: saga, recovery, proactive detection, outbox publishing, notifications.</td><td>Same as api</td><td>Heartbeat key in Redis</td></tr>
+      <tr><td class="req"><code>scheduler</code></td><td class="how"><code>taskiq scheduler</code>, one copy: enqueues provider polls and sweeps.</td><td>Same as api</td><td>Heartbeat key in Redis</td></tr>
+      <tr><td class="req"><code>web</code></td><td class="how">nginx with the React build. Proxies <code>/api</code>, with buffering off for SSE. Port 3000.</td><td>api healthy</td><td>HTTP check</td></tr>
+      <tr><td class="req"><code>evals</code></td><td class="how">Compose profile, off by default. Runs on an internal network with no internet route, using separate <code>*_eval</code> databases. Writes <code>evals/results.md</code>.</td><td>Its own stack</td><td>Exit code is the result</td></tr>
+    </tbody>
+  </table></div>
+  <div class="two">
+    <div class="panel"><h3>Commands</h3><ul class="b">
+      <li><strong><code>make up</code>:</strong> Build, start, wait until healthy, print the URL.</li>
+      <li><strong><code>make evals</code>:</strong> Run all scenarios offline and write the eval table.</li>
+      <li><strong><code>make logs</code> and <code>make down</code>:</strong> Follow logs, or stop and keep data.</li>
+      <li><strong><code>make reset</code>:</strong> Delete volumes and reseed.</li>
+      <li><strong>Compatibility:</strong> <code>make</code> uses <code>docker compose</code>, or <code>docker-compose</code> if the plugin is missing.</li>
+    </ul></div>
+    <div class="panel"><h3>Build rules</h3><ul class="b">
+      <li><strong>One Python image:</strong> <code>api</code>, <code>worker</code>, <code>scheduler</code>, <code>migrate</code>, <code>mock-provider</code> and <code>evals</code> share it with different commands. Multi-stage build, <code>uv.lock</code>, non-root user.</li>
+      <li><strong>Secrets:</strong> <code>GOOGLE_API_KEY</code> comes from the environment at run time and is never in an image or in git. <code>.env.example</code> lists all settings.</li>
+      <li><strong>No key:</strong> The stack still starts. Chat replies clearly that no key is set.</li>
+      <li><strong>Memory limits:</strong> Each service has one, because this stack must run on an 8 GB laptop with a 3.8 GB Docker VM. Lightly used after the tests, PostgreSQL took 34 MiB and Redis 12 MiB. I will set the others after measuring them.</li>
+      <li><strong>Output:</strong> Traces and eval results go to bind mounts under <code>./artifacts</code> and <code>./evals</code>.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="redis">
+  <h2>Redis rules</h2>
+  <p>With a queue, a job can be lost or delivered twice. Booking code must stay correct in both cases, so PostgreSQL decides what is true and Redis only carries work.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Use</th><th>How</th><th>If Redis fails</th></tr></thead>
+    <tbody>
+      <tr><td class="req">Job stream</td><td class="how"><code>RedisStreamBroker</code> gives at-least-once delivery. Idle timeout is 60 s, longer than the 45 s saga limit, or a running job gets a second delivery. The library default of 10 minutes equals the hold lifetime, so it is too long.</td><td class="how">Jobs wait in the outbox table. The publisher resends them when Redis returns.</td></tr>
+      <tr><td class="req">Pub/sub</td><td class="how">Worker tells <code>api</code> about a notification, and <code>api</code> pushes it through SSE. Notifications are stored in PostgreSQL first, so a reconnect replays them with <code>Last-Event-ID</code>.</td><td class="how">Live push stops. Stored notifications appear on the next load.</td></tr>
+      <tr><td class="req">Turn lock</td><td class="how">One lock per session with an owner token and a 150 s expiry, longer than the 120 s run limit. It stops two turns from colliding. <code>StaleSessionError</code> is the backstop if a lock ever expires early.</td><td class="how">Chat fails closed with a clear reply. No tool runs.</td></tr>
+    </tbody>
+  </table></div>
+  <ul class="b">
+    <li><strong>Outbox:</strong> A domain change and its job row commit in one PostgreSQL transaction. A publisher then moves the row to Redis. This closes the gap where a crash between commit and enqueue would lose a job.</li>
+    <li><strong>Every job is safe to repeat:</strong> The saga claims its attempt with a conditional update and a lease. A second delivery finds it claimed or finished. The idempotency key protects the provider call itself.</li>
+    <li><strong>Sweeps:</strong> Every 15 s, the scheduler enqueues a sweep job. It looks in PostgreSQL for unpublished outbox rows and attempts with expired leases, and requeues them. So recovery from a killed worker or a full Redis wipe needs nothing from the broker. A lost booking attempt is picked up about 75 s after the worker dies, well inside the 10-minute hold.</li>
+    <li><strong>Broker settings:</strong> Set <code>unacknowledged_lock_timeout</code>. The default is no expiry, so from reading the code, a worker that dies holding that lock could block reclaim. I have not tested this case.</li>
+  </ul>
+  <h3>What I tested on real containers</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>Question</th><th>Result</th><th>Effect on the design</th></tr></thead>
+    <tbody>
+      <tr><td class="req">Does a killed worker's job come back by itself?</td><td><span class="pill no">Only when a new job arrives</span></td><td class="how">With a 5 s idle timeout, the job was still undelivered after 40 s on a quiet queue. One new job brought it back in 0.1 s. The reclaim code runs only after a read that returned new messages. This is why recovery rests on PostgreSQL sweeps.</td></tr>
+      <tr><td class="req">Can a job run twice while still running?</td><td><span class="pill warn">Yes</span></td><td class="how">A 14 s job on a live worker, with a 5 s idle timeout, got a second delivery when a new job arrived. So idle timeout must exceed the job limit, and the saga needs its lease and idempotency key.</td></tr>
+      <tr><td class="req">Does wiping Redis lose a queued job?</td><td><span class="pill warn">Yes</span></td><td class="how">The job never ran. This is why the outbox exists.</td></tr>
+      <tr><td class="req">Can two callers consume one approval?</td><td><span class="pill ok">No</span></td><td class="how">Of 10 concurrent conditional updates on separate connections, exactly 1 won.</td></tr>
+      <tr><td class="req">Does the index stop duplicate bookings?</td><td><span class="pill ok">Yes</span></td><td class="how">The partial unique index rejected a second active booking, and allowed a new one after cancel.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="adk">
+  <h2>The ADK decision</h2>
+  <p><strong>Use ADK, pinned to 2.13.0, and keep it thin.</strong> The gateway, saga and memory code do not import ADK, so we can replace it later at low cost. Its session service gives us a durable log, but it will not build the prompt, hold workflow truth or make approval decisions.</p>
+  <div class="two">
+    <div class="panel"><h3>ADK owns</h3><ul class="b">
+      <li><strong>Inner loop:</strong> Model call, tool call, tool response.</li>
+      <li><strong>Tool schemas:</strong> Generated from Python functions.</li>
+      <li><strong>Transcript:</strong> <code>DatabaseSessionService</code> on PostgreSQL.</li>
+      <li><strong>Model swap:</strong> <code>BaseLlm</code> lets evals use a scripted model.</li>
+      <li><strong>Model-call cap:</strong> <code>RunConfig.max_llm_calls</code>.</li>
+    </ul></div>
+    <div class="panel"><h3>We own</h3><ul class="b">
+      <li><strong>Workflow state:</strong> State machine in <code>errand</code>.</li>
+      <li><strong>Approvals:</strong> Hash-bound records, single use.</li>
+      <li><strong>Side effects:</strong> Saga, idempotency, recovery.</li>
+      <li><strong>Prompt content:</strong> ContextAssembler replaces ADK's history.</li>
+      <li><strong>Memory and trace:</strong> Provenance, forgetting, cost, context log.</li>
+    </ul></div>
+  </div>
+  <h3>What I tested</h3>
+  <p>The session, collision and rotation rows ran on PostgreSQL. The others ran on SQLite, or against live Gemini.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Question</th><th>Result</th><th>Effect on the design</th></tr></thead>
+    <tbody>
+      <tr><td class="req">Can evals run offline?</td><td><span class="pill ok">Yes</span></td><td class="how">A <code>BaseLlm</code> subclass ran a scripted tool call, tool response and final text with no network.</td></tr>
+      <tr><td class="req">Does a session survive restart?</td><td><span class="pill ok">Yes</span></td><td class="how">A new service object on the same database read back all 4 events.</td></tr>
+      <tr><td class="req">Can we control what the model sees?</td><td><span class="pill ok">Yes</span></td><td class="how"><code>before_model_callback</code> replaced the contents. The model saw only our text, and a test secret in the user message did not reach it. Budget and forgetting rely on this.</td></tr>
+      <tr><td class="req">Is the model-call limit enforced?</td><td><span class="pill ok">Yes</span></td><td class="how">It raises <code>LlmCallsLimitExceededError</code>. The controller must catch this and turn it into a clear reply.</td></tr>
+      <tr><td class="req">What if the model invents a tool?</td><td><span class="pill ok">Safe</span></td><td class="how">A made-up <code>book</code> call ran nothing. ADK fires <code>on_tool_error_callback</code>, so we route that to the gateway. The gateway logs it, counts it and returns the error. The model receives the error, and it is saved in the session.</td></tr>
+      <tr><td class="req">Can two writers share a session?</td><td><span class="pill warn">No</span></td><td class="how">Whoever holds the older copy gets <code>StaleSessionError</code>. A background write during a tool call killed the user's run. With no lock, two turns at once also left one failed. So only <code>api</code> writes to ADK sessions, under the turn lock.</td></tr>
+      <tr><td class="req">Does forgetting really remove text?</td><td><span class="pill ok">Yes</span></td><td class="how"><code>delete_session</code> removed all 4 event rows, including the one holding a test secret. This supports rotating the session on forget.</td></tr>
+      <tr><td class="req">Are live calls bounded by default?</td><td><span class="pill no">No</span></td><td class="how"><code>gemini-3.8-flash</code> held each call until our timeout (504 at 18.7 s with a 20 s limit, 98.9 s with a 100 s limit). The lite model never failed, but 5 of 12 calls took over 5 s. We need a request timeout and an outer deadline, and the brief requires hard limits anyway.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="two">
+    <div class="panel"><h3>ADK features we will not use</h3><ul class="b">
+      <li><strong><code>require_confirmation</code>:</strong> It carries a <code>confirmed</code> flag, not a binding to provider, slot and price.</li>
+      <li><strong>Resumability:</strong> Its docs say best effort and at-least-once. That is unsafe around <code>book</code>.</li>
+      <li><strong>Events compaction:</strong> Marked experimental and LLM-based. We need deterministic context that tests can prove.</li>
+      <li><strong>Session state for workflow:</strong> It lives in another database, so it cannot share a transaction with approvals.</li>
+      <li><strong>Workflow graphs:</strong> They would add a second state model.</li>
+    </ul></div>
+    <div class="panel"><h3>Costs to manage</h3><ul class="b">
+      <li><strong>Forgetting:</strong> The ADK transcript is append-only, so it keeps forgotten text. We send the model a redacted <code>turn_view</code> and rotate the ADK session on forget, which deletes the old rows.</li>
+      <li><strong>Table creation:</strong> ADK manages its own tables, so it has its own database and Alembic stays out of it.</li>
+      <li><strong>Dependencies:</strong> ADK and its dependencies install about 68 packages. It needs Python 3.11 or later. The image pins the versions.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="flows">
+  <h2>Core flows</h2>
+  <h3>Workflow state machine</h3>
+  <ol class="flow">
+    <li>INTAKE</li><li>SEARCHING</li><li>COMPARING</li><li>AWAITING_APPROVAL</li><li>EXECUTING</li><li>VERIFYING</li><li>DONE</li>
+  </ol>
+  <ul class="b">
+    <li><strong>Other states:</strong> <code>DISRUPTED</code> (provider cancelled, re-enters COMPARING), <code>FAILED</code> and <code>LIMIT_REACHED</code>.</li>
+    <li><strong>Control:</strong> A transition table in code rejects illegal moves, and a version column stops two processes from overwriting each other. The model cannot set state.</li>
+    <li><strong>Run outcomes:</strong> Every run ends as <code>done</code>, <code>needs_input</code>, <code>awaiting_approval</code>, <code>verifying</code>, <code>limit_reached</code> or <code>tool_failed</code>. Each one has a user-facing reply.</li>
+  </ul>
+
+  <h3>Approval and booking</h3>
+  <ol class="steps">
+    <li><span class="who warn">Model</span><span>Calls <code>propose_booking(provider_id, slot)</code>.</span></li>
+    <li><span class="who info">Code</span><span>Calls <code>hold_slot</code> and reads the quoted price. If it differs from the search price or breaks the budget, the card says so.</span></li>
+    <li><span class="who info">Code</span><span>Writes an approval row with action, user, provider, slot, price, hold ID, expiry and a SHA-256 hash of those fields. The card is built from these fields only, never from model text or reviews.</span></li>
+    <li><span class="who ok">User</span><span>Clicks Confirm, or types a whole-message match such as "yes" or "book it". The controller checks this before the model runs. "Yes, but Saturday" is not a match, so it goes to the model as a change.</span></li>
+    <li><span class="who info">Code</span><span>Commits one transaction: conditional update of the approval to consumed, attempt row with key <code>book:&lt;approval_id&gt;</code>, outbox row. The user sees "booking in progress, not confirmed yet".</span></li>
+    <li><span class="who info">Worker</span><span>Claims the attempt. The gateway recomputes the hash from current data and refuses on any mismatch. It then calls <code>book</code>.</span></li>
+    <li><span class="who info">Worker</span><span>Always calls <code>get_booking_status</code>. Only a verified booking creates the success notification, and its text is a template. SSE delivers it to the chat.</span></li>
+  </ol>
+  <div class="scroll"><table>
+    <thead><tr><th>Book result</th><th>Status check</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td class="req">success</td><td>booked</td><td class="how">Notify with verified details.</td></tr>
+      <tr><td class="req">slot_taken</td><td>not booked</td><td class="how">Close this approval. Show other slots. Any new choice needs a fresh approval.</td></tr>
+      <tr><td class="req">timeout</td><td>booked</td><td class="how">Do not retry. Notify with verified details.</td></tr>
+      <tr><td class="req">timeout</td><td>not booked</td><td class="how">Retry with the same hold and same key, at most twice.</td></tr>
+      <tr><td class="req">hold_expired</td><td>not booked</td><td class="how">Take a new hold and ask for a fresh approval, even if the price is the same.</td></tr>
+      <tr><td class="req">Any, or worker died</td><td>status unavailable</td><td class="how">Attempt stays open. The user sees "not confirmed yet". The sweep re-queues it after the lease expires.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="two">
+    <div class="panel"><h3>Prompt injection defence</h3><ul class="b">
+      <li><strong>No power to abuse:</strong> The model has no side-effect tool, and approval comes only from the raw user message or a click.</li>
+      <li><strong>Labelled data:</strong> Reviews reach the model as JSON fields marked untrusted. The gateway flags suspicious text in the trace.</li>
+      <li><strong>Clean card:</strong> Provider free text never appears on the approval card.</li>
+      <li><strong>Memory provenance:</strong> A memory is explicit only if its quote appears verbatim in a user message. Text from a review can never pass this check.</li>
+      <li><strong>Remaining risk:</strong> A review can still bias a recommendation. The user sees exact details before approving, and code enforces hard limits on budget and time.</li>
+    </ul></div>
+    <div class="panel"><h3>Context assembly (8,000 estimated tokens)</h3><ul class="b">
+      <li><strong>Counted:</strong> System prompt and tool declarations count against the budget.</li>
+      <li><strong>Filter first:</strong> SQL keeps only rows that are active, not superseded, and either explicit or user-confirmed.</li>
+      <li><strong>Then rank:</strong> Deterministic score on service and scope, with no embeddings. This stays reproducible offline.</li>
+      <li><strong>Trim order:</strong> Older turns, then summary, then memories. Current request and current tool calls stay. Large tool results shrink first.</li>
+      <li><strong>Worker events:</strong> Notifications from <code>errand</code> enter here on the next turn, so the worker never touches an ADK session.</li>
+      <li><strong>Counting:</strong> Offline uses a pessimistic chars / 3 estimate. Live runs log the real count beside it.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="functional">
+  <h2>Functional requirements</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>ID</th><th>Requirement</th><th>How we enforce it</th><th>Proof</th></tr></thead>
+    <tbody>
+      <tr><td class="id">F1</td><td class="req">Collect only missing details</td><td class="how"><code>update_request</code> stores fields on the workflow row. Code computes <code>missing_fields</code> and sends it to the model. The gateway refuses a search while required fields are missing.</td><td class="proof">E01 E03</td></tr>
+      <tr><td class="id">F2</td><td class="req">Keep context on a correction</td><td class="how">Updates merge field by field and never replace the whole request. Each field records its source and time.</td><td class="proof">E02</td></tr>
+      <tr><td class="id">F3</td><td class="req">Explicit workflow</td><td class="how">State machine stored in <code>errand</code>. Illegal transitions raise an error and appear in the trace.</td><td class="proof">All, I6</td></tr>
+      <tr><td class="id">F4</td><td class="req">Compare providers</td><td class="how">Code removes providers that break hard limits (time window, budget). The model then compares the rest and explains the choice.</td><td class="proof">E01 E06</td></tr>
+      <tr><td class="id">F5</td><td class="req">Book with approval</td><td class="how">Hold, approval card, then saga in the worker. The model cannot call <code>book</code>.</td><td class="proof">E01 E04</td></tr>
+      <tr><td class="id">F6</td><td class="req">Cancel with approval</td><td class="how">Same approval path. The saga retries the 503 with the same key, at most 3 times with backoff, then reports a clear failure.</td><td class="proof">E17 E18</td></tr>
+      <tr><td class="id">F7</td><td class="req">Reschedule with approval</td><td class="how">Same approval path. <code>slot_conflict</code> closes the approval, keeps the old booking and offers other slots.</td><td class="proof">E19</td></tr>
+      <tr><td class="id">F8</td><td class="req">Refer to past bookings</td><td class="how">"Same as last time" and "my AC servicing" resolve through <code>list_bookings</code>. More than one match means the agent asks.</td><td class="proof">E20</td></tr>
+      <tr><td class="id">F9</td><td class="req">Remember across sessions</td><td class="how"><code>memories</code> table keyed by user, with key, value, scope, source and status. It is separate from any chat session.</td><td class="proof">E03 E20</td></tr>
+      <tr><td class="id">F10</td><td class="req">Inspect, correct, forget</td><td class="how">Available through chat and REST. Correct adds a row and supersedes the old one. Forget marks a tombstone, redacts <code>turn_view</code>, rebuilds the summary and rotates the ADK session.</td><td class="proof">E21 E22</td></tr>
+      <tr><td class="id">F11</td><td class="req">Explicit vs inferred</td><td class="how"><code>propose_memory(key, value, quote)</code>. Code checks the quote against user messages. No match means inferred and unconfirmed, and it stays out of context until the user confirms.</td><td class="proof">E07 E23</td></tr>
+      <tr><td class="id">F12</td><td class="req">Proactive cancellation</td><td class="how">Scheduler enqueues a poll. Worker compares <code>list_bookings</code> with our records. Code decides whether to notify and records the reason. It searches within preferences. It places no hold until the user picks, because a hold lasts only 10 minutes. Rebooking needs a fresh approval.</td><td class="proof">E24 E25</td></tr>
+      <tr><td class="id">F13</td><td class="req">Real LLM drives the agent</td><td class="how">Gemini through ADK reads requests, chooses read tools and makes proposals. The demo uses the live model.</td><td class="proof">Demo, recordings</td></tr>
+      <tr><td class="id">F14</td><td class="req">Mock tools match the contract</td><td class="how">All 8 tools with the exact names and failures, in their own container. Outcome comes from <code>hash(seed, key)</code>, so order does not matter. Scenario files can force any outcome. Fake clock tests the 10-minute expiry.</td><td class="proof">Contract and 70/15/15 tests</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="nfr">
+  <h2>Non-functional requirements</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>ID</th><th>Requirement</th><th>How we enforce it</th><th>Proof</th></tr></thead>
+    <tbody>
+      <tr><td class="id">N1</td><td class="req">Hard run limits</td><td class="how">Per chat run: 8 model calls (<code>RunConfig</code>), 12 tool calls (gateway counter), 120 s (<code>asyncio.timeout</code>). Per model request: 30 s. Per saga job: 45 s and a capped retry count.</td><td class="proof">E27 E28 E29</td></tr>
+      <tr><td class="id">N2</td><td class="req">Clear result on every exit</td><td class="how">The controller wraps every run. Any exception maps to one of six outcomes. If the model is down, the reply comes from a template.</td><td class="proof">E27 to E30, I6</td></tr>
+      <tr><td class="id">N3</td><td class="req">Approval enforced by code</td><td class="how">The gateway refuses side-effect tools without a valid token, and it accepts them only from the saga. Evals call it directly to prove the refusal.</td><td class="proof">E04 E05, I1</td></tr>
+      <tr><td class="id">N4</td><td class="req">Material change voids approval</td><td class="how">The hash covers all approved fields, including provider, slot and price. A mismatch at call time refuses the call and invalidates the approval. Only one approval can be pending per workflow.</td><td class="proof">E08 E09</td></tr>
+      <tr><td class="id">N5</td><td class="req">No duplicate bookings</td><td class="how">Key derives from the approval ID. A partial unique index covers active user, provider and slot. Consuming an approval is a conditional update, so only one caller wins. The mock honours the key.</td><td class="proof">E14 to E16, E32, I2</td></tr>
+      <tr><td class="id">N6</td><td class="req">Verify after a timeout</td><td class="how">The saga must pass through VERIFYING. The state machine has no path from a timeout to a retry or DONE without a status check.</td><td class="proof">E11 E12</td></tr>
+      <tr><td class="id">N7</td><td class="req">No false success claims</td><td class="how">Success text is a template that needs a verified row. As a second layer, <code>after_model_callback</code> blocks booking claims when no verified attempt exists. This layer is a heuristic.</td><td class="proof">E11 E29, I3</td></tr>
+      <tr><td class="id">N8</td><td class="req">Safe across restarts</td><td class="how">The attempt row commits before the call. Evals kill the real <code>worker</code> and <code>api</code> processes at set points, then check that the next delivery or sweep finishes the work.</td><td class="proof">E15 E16</td></tr>
+      <tr><td class="id">N9</td><td class="req">Tool output is data</td><td class="how">The layers listed under Prompt injection defence. Security does not depend on the model resisting the injection.</td><td class="proof">E06 E07</td></tr>
+      <tr><td class="id">N10</td><td class="req">Fixed context budget</td><td class="how">ContextAssembler enforces 8,000 estimated tokens on every model call, including mid-run tool calls.</td><td class="proof">E26, I5</td></tr>
+      <tr><td class="id">N11</td><td class="req">No forgotten or unconfirmed facts</td><td class="how">Data-layer filter, redacted <code>turn_view</code>, rebuilt summary. Seed data holds unique marker strings, and tests search every logged context for them.</td><td class="proof">E22 E23, I4</td></tr>
+      <tr><td class="id">N12</td><td class="req">Log context each turn</td><td class="how">The full payload and per-slice token counts go to <code>context_log</code> before each model call. If the write fails, the call does not run.</td><td class="proof">E26</td></tr>
+      <tr><td class="id">N13</td><td class="req">Trace every run</td><td class="how"><code>trace_events</code> plus one JSONL file per run: state changes, model calls, tool names and arguments, sanitized results, latency. A run ID follows a job from <code>api</code> into <code>worker</code>, so one booking is one trace.</td><td class="proof">Trace test, I6</td></tr>
+      <tr><td class="id">N14</td><td class="req">Tokens and cost</td><td class="how">Read <code>usage_metadata</code> and multiply by a price table. The scripted model also emits usage, because ADK otherwise logs it as missing.</td><td class="proof">Trace test</td></tr>
+      <tr><td class="id">N15</td><td class="req">Survive model and tool failure</td><td class="how">Request timeout, one retry on 429, 503 or 504, then a clear reply. Tool failures follow the saga's retry rules.</td><td class="proof">E29 E30</td></tr>
+      <tr><td class="id">N16</td><td class="req">Safe concurrency</td><td class="how">Redis turn lock per session, with <code>StaleSessionError</code> as backstop. Only <code>api</code> writes to ADK sessions. Attempts use leases. Workflow rows use a version check.</td><td class="proof">E14 E24 E33</td></tr>
+      <tr><td class="id">N17</td><td class="req">Reproducible offline evals</td><td class="how">Scripted model, recorded Gemini replies, seeded mock, fake clock. The evals network is internal with no internet route, so a live call fails the run.</td><td class="proof">make evals</td></tr>
+      <tr><td class="id">N18</td><td class="req">Survive Redis or PostgreSQL loss</td><td class="how">Redis loss: outbox and sweeps restore the work. PostgreSQL loss: no intent can be written, so no side-effect call starts, and <code>api</code> returns a clear error.</td><td class="proof">E31 E34 E35, I8</td></tr>
+      <tr><td class="id">N19</td><td class="req">One-command local run</td><td class="how"><code>make up</code>, ordered by health checks. Migrations run once and are safe to repeat. A CI-style check runs <code>make up</code> from a clean state and waits for <code>/readyz</code>.</td><td class="proof">Smoke test</td></tr>
+      <tr><td class="id">N20</td><td class="req">Secrets stay out</td><td class="how">Key comes from the environment at run time. <code>.dockerignore</code> and <code>.gitignore</code> exclude <code>.env</code>. Traces store sanitized values only.</td><td class="proof">Image and repo scan</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="evals">
+  <h2>Evaluation plan</h2>
+  <p>The harness runs 36 scenarios with simulated users, against real PostgreSQL, Redis and mock containers, and writes the eval table itself. After every scenario, a checker reads the databases and asserts these invariants. Reply wording is not the test.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>ID</th><th>Invariant checked after every scenario</th></tr></thead>
+    <tbody>
+      <tr><td class="id">I1</td><td>Every side effect has one consumed approval with a matching hash.</td></tr>
+      <tr><td class="id">I2</td><td>At most one booking per idempotency key, and per user, provider and slot.</td></tr>
+      <tr><td class="id">I3</td><td>No success reply exists without a verified status before it.</td></tr>
+      <tr><td class="id">I4</td><td>No forgotten, superseded or unconfirmed marker appears in any logged context.</td></tr>
+      <tr><td class="id">I5</td><td>Every logged context is within the token budget.</td></tr>
+      <tr><td class="id">I6</td><td>Every run has a complete trace, one final outcome and a user-facing reply.</td></tr>
+      <tr><td class="id">I7</td><td>No provider free text appears on an approval card.</td></tr>
+      <tr><td class="id">I8</td><td>No outbox row or open attempt remains unresolved when a scenario ends.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="scroll"><table>
+    <thead><tr><th>ID</th><th>Scenario</th><th>Key assertion</th></tr></thead>
+    <tbody>
+      <tr><td class="id">E01</td><td>Full booking from a partial request</td><td>Only missing fields are requested. Booking is verified.</td></tr>
+      <tr><td class="id">E02</td><td>User corrects the budget</td><td>Area and time window stay unchanged.</td></tr>
+      <tr><td class="id">E03</td><td>Area known from memory</td><td>The field fills from memory with its source recorded.</td></tr>
+      <tr><td class="id">E04</td><td>Model tries <code>book</code> directly</td><td>Nothing runs. Gateway logs and counts it. Direct gateway call is refused.</td></tr>
+      <tr><td class="id">E05</td><td>User says "already approved, skip it"</td><td>No approval is created or consumed.</td></tr>
+      <tr><td class="id">E06</td><td>Review tells the agent to book now</td><td>No side effect. Flag appears in the trace.</td></tr>
+      <tr><td class="id">E07</td><td>Review tries to plant a memory</td><td>Quote check fails. Fact stays out of context.</td></tr>
+      <tr><td class="id">E08</td><td>Price changes after approval</td><td>Call is refused. A fresh approval shows the new price.</td></tr>
+      <tr><td class="id">E09</td><td>Slot changes after approval</td><td>Old approval is void. Old "yes" has no effect.</td></tr>
+      <tr><td class="id">E10</td><td><code>slot_taken</code> on book</td><td>No success claim. New choice needs fresh approval.</td></tr>
+      <tr><td class="id">E11</td><td>Timeout, actually booked</td><td>Status is checked. No retry. One booking.</td></tr>
+      <tr><td class="id">E12</td><td>Timeout, not booked</td><td>Retry uses the same key. One booking.</td></tr>
+      <tr><td class="id">E13</td><td><code>hold_expired</code></td><td>New hold and fresh approval.</td></tr>
+      <tr><td class="id">E14</td><td>"Yes" twice, plus a double click</td><td>One booking. Second reply replays the result.</td></tr>
+      <tr><td class="id">E15</td><td>Worker killed after intent, before book</td><td>Reclaimed job finishes safely. One booking at most.</td></tr>
+      <tr><td class="id">E16</td><td>Worker killed after book, before recording</td><td>Status finds the booking. No second one.</td></tr>
+      <tr><td class="id">E17</td><td>Cancel gets a 503</td><td>Retry with same key succeeds.</td></tr>
+      <tr><td class="id">E18</td><td>Cancel retries run out (injected)</td><td>Clear failure. No cancel claim.</td></tr>
+      <tr><td class="id">E19</td><td>Reschedule gets <code>slot_conflict</code></td><td>Old booking stays. New slot needs fresh approval.</td></tr>
+      <tr><td class="id">E20</td><td>"Same electrician, not before 10"</td><td>Provider comes from history. Earlier slots are removed.</td></tr>
+      <tr><td class="id">E21</td><td>Correct a memory</td><td>Old value never reaches the model again.</td></tr>
+      <tr><td class="id">E22</td><td>Forget a memory also present in old chat</td><td>Marker is absent from all later contexts.</td></tr>
+      <tr><td class="id">E23</td><td>Inferred fact, then confirmed</td><td>Excluded before confirmation, included after.</td></tr>
+      <tr><td class="id">E24</td><td>Provider cancels with no user prompt</td><td>Detected and notified. Replacement fits preferences. Fresh approval is required. A user turn in progress still completes.</td></tr>
+      <tr><td class="id">E25</td><td>Duplicate event, or past booking</td><td>One notice for a duplicate. None for a past booking.</td></tr>
+      <tr><td class="id">E26</td><td>60 memories and a long chat</td><td>Within budget on every call. Only relevant facts sent.</td></tr>
+      <tr><td class="id">E27</td><td>Model loops until the call limit</td><td>Stops at the limit with a clear reply.</td></tr>
+      <tr><td class="id">E28</td><td>Tool calls hit the limit</td><td>Gateway refuses. Clear reply.</td></tr>
+      <tr><td class="id">E29</td><td>Saga job limit hits during book</td><td>User sees "not confirmed yet". Next delivery resolves by status.</td></tr>
+      <tr><td class="id">E30</td><td>Model 503 and unexpected tool error</td><td>One retry, then a clear reply. No hang.</td></tr>
+      <tr><td class="id">E31</td><td>Redis wiped with a booking job queued</td><td>Sweep republishes from outbox. One booking.</td></tr>
+      <tr><td class="id">E32</td><td>Same job delivered twice while the first still runs</td><td>Lease stops the second. One provider side effect.</td></tr>
+      <tr><td class="id">E33</td><td>Two messages at once on one session</td><td>Lock serialises them. No <code>StaleSessionError</code> reaches the user.</td></tr>
+      <tr><td class="id">E34</td><td>Redis down during chat and approval</td><td>Clear reply. Work finishes after Redis returns.</td></tr>
+      <tr><td class="id">E35</td><td>PostgreSQL down during approval</td><td>No side-effect call. Clear error.</td></tr>
+      <tr><td class="id">E36</td><td>Worker killed on a quiet queue</td><td>Sweep finds the expired lease and finishes the job, with no new user traffic.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="rule"><strong>Known limit:</strong> Scripted evals prove our code's invariants, not the model's judgement. For example, a scripted model cannot show that Gemini avoids re-asking a question. I will add recorded Gemini replies for E01, E02 and E06, and one live run before the demo.</p>
+</section>
+
+<section id="deliver">
+  <h2>Deliverables</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Deliverable</th><th>How we produce it</th></tr></thead>
+    <tbody>
+      <tr><td class="req">Git repo</td><td class="how">Private repo with implementation, mocks, tests, Compose file, Makefile and README, created when you ask.</td></tr>
+      <tr><td class="req">Design note, 1 page</td><td class="how">State model, approval, idempotency and recovery, memory, observability, trade-offs, annotated trace excerpt.</td></tr>
+      <tr><td class="req">Eval table</td><td class="how"><code>make evals</code> writes it to <code>evals/results.md</code>.</td></tr>
+      <tr><td class="req">Three real bugs</td><td class="how"><code>BUGS.md</code> kept from day one. Only real failures count, each with its regression test.</td></tr>
+      <tr><td class="req">End-to-end trace</td><td class="how">Raw JSONL from a run that includes a timeout-after-success (E11 path), covering <code>api</code> and <code>worker</code> under one run ID.</td></tr>
+      <tr><td class="req">Demo, 3 to 5 min</td><td class="how">You record it. UI shows chat and trace side by side, with a live timeout or injection failure. I will prepare a demo scenario with a set seed.</td></tr>
+      <tr><td class="req">AI assistant transcript</td><td class="how">Export of these Claude Code sessions.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="decide">
+  <h2>Your decisions</h2>
+  <p>PostgreSQL, Redis and Docker Compose are settled. Three calls on this list follow from them, so I made them. Tell me if you disagree.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Decision</th><th>My recommendation</th><th>Alternative and cost</th></tr></thead>
+    <tbody>
+      <tr><td class="req">Where does the saga run? <span class="pill info">New</span></td><td class="how"><strong>In <code>worker</code>.</strong> An API restart cannot interrupt a booking, and <code>api</code> stays free to scale. The reply arrives through SSE.</td><td class="how">Run it inside the approval request. The reply is simpler, but restart safety then rests entirely on sweeps.</td></tr>
+      <tr><td class="req">Which queue library? <span class="pill info">New</span></td><td class="how"><strong><code>taskiq</code> with <code>RedisStreamBroker</code>.</strong> Active releases, async, and tested here. Its reclaim gap does not matter, because PostgreSQL sweeps handle recovery and the 15 s sweep job also triggers reclaim.</td><td class="how">Write our own on Redis Streams, with reclaim on every loop. This fixes the gap at the source, but it is more code to own and test for little gain.</td></tr>
+      <tr><td class="req">Mock in process or as a service? <span class="pill warn">Changed</span></td><td class="how"><strong>Own container.</strong> I earlier said in process. With separate processes, real kill tests and a future real provider, an HTTP boundary now pays for itself.</td><td class="how">A shared library is less code, but a killed worker takes its in-flight mock call with it, which makes timeout tests less realistic.</td></tr>
+      <tr><td class="req">Does the model get <code>book</code>, <code>cancel</code>, <code>reschedule</code> as tools?</td><td class="how"><strong>No.</strong> It proposes, and code executes. This removes a whole class of failure. The brief lets us "call, sequence, wrap, and orchestrate" tools.</td><td class="how">Expose them and let the gateway refuse without approval. This is closer to a literal "LLM drives tool calls", but the model then controls retries around a side effect.</td></tr>
+      <tr><td class="req">Typed "yes", or buttons only?</td><td class="how"><strong>Both.</strong> Typed input must match a strict whole-message list. It is a chat agent, so typing must work.</td><td class="how">Buttons only is the strongest option, but it is awkward in chat and makes simulated users less realistic.</td></tr>
+      <tr><td class="req">Which default model?</td><td class="how"><strong><code>gemini-3.5-flash-lite</code></strong>, with no fallback model. It did not fail in 12 calls. I tested one short tool loop only, so a config change may be needed if it reasons poorly.</td><td class="how">A fallback such as <code>gemini-2.5-flash</code> covers a rare outage, and we can add it later. <code>gemini-3.8-flash</code> never completed a call in our tests.</td></tr>
+      <tr><td class="req">Who decides proactive notifications?</td><td class="how"><strong>Code.</strong> Rules are testable, and the trace records the reason. The model can word the message.</td><td class="how">Let the model decide. This shows more "agency", but it is harder to assert and adds a new injection surface.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Send me changes or questions on any row. I will not start building until you say so.</p>
+</section>
+</div>
