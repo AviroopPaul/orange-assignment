@@ -222,7 +222,9 @@ describe("chat", () => {
   it("says plainly that booking is not connected yet", () => {
     fakeApi(STATUS_OK);
     render(<App />);
-    expect(screen.getByText(/booking and memory are not connected yet/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Holding, booking and memory are not connected yet/),
+    ).toBeInTheDocument();
   });
 
   it("fills the box from an example without sending it", async () => {
@@ -248,7 +250,7 @@ describe("trace", () => {
               seq: 1,
               kind: "tool_refused",
               name: "book",
-              data: { args: {}, error: "ValueError" },
+              data: { caller: "model", reason: "not_allowed", args: { hold_id: "h1" } },
               latency_ms: null,
               input_tokens: null,
               output_tokens: null,
@@ -265,7 +267,76 @@ describe("trace", () => {
 
     expect(await screen.findByText("Tool refused")).toBeInTheDocument();
     expect(screen.getByText("book")).toBeInTheDocument();
-    expect(screen.getByText("ValueError")).toBeInTheDocument();
+    expect(screen.getByText("not_allowed")).toBeInTheDocument();
+    expect(screen.getByText('{"hold_id":"h1"}')).toBeInTheDocument();
+  });
+
+  it("shows a tool call, its retries and any suspicious text", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply("run-1", "Here is what I found."),
+      "GET /api/runs/run-1/trace": () => ({
+        json: traceFor("run-1", {
+          events: [
+            {
+              seq: 1,
+              kind: "tool_call",
+              name: "get_provider",
+              data: {
+                caller: "model",
+                status: "ok",
+                error_code: null,
+                attempts: 3,
+                injection_flags: ["ignore_instructions", "skip_approval"],
+                args: { provider_id: "plm-03" },
+              },
+              latency_ms: 120,
+              input_tokens: null,
+              output_tokens: null,
+              estimated_cost_usd: null,
+              created_at: "2026-11-02T12:00:01+00:00",
+            },
+          ],
+        }),
+      }),
+    });
+    render(<App />);
+
+    await say("tell me about them");
+
+    expect(await screen.findByText("Tool call")).toBeInTheDocument();
+    expect(screen.getByText("get_provider")).toBeInTheDocument();
+    expect(screen.getByText("ignore_instructions, skip_approval")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+  });
+
+  it("warns when a tool's outcome is unknown", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply("run-1", "Checking."),
+      "GET /api/runs/run-1/trace": () => ({
+        json: traceFor("run-1", {
+          events: [
+            {
+              seq: 1,
+              kind: "tool_call",
+              name: "book",
+              data: { caller: "saga", status: "timeout", error_code: "timeout", ambiguous: true },
+              latency_ms: 10000,
+              input_tokens: null,
+              output_tokens: null,
+              estimated_cost_usd: null,
+              created_at: "2026-11-02T12:00:01+00:00",
+            },
+          ],
+        }),
+      }),
+    });
+    render(<App />);
+
+    await say("hello");
+
+    expect(await screen.findByText(/check the source of truth/)).toBeInTheDocument();
   });
 
   it("explains when a trace cannot be loaded", async () => {
@@ -288,7 +359,8 @@ describe("status bar", () => {
     render(<App />);
 
     const services = await screen.findByRole("list", { name: "Service status" });
-    await waitFor(() => expect(within(services).getAllByRole("listitem")).toHaveLength(6));
+    await waitFor(() => expect(within(services).getAllByRole("listitem")).toHaveLength(7));
+    expect(within(services).getByText("Mock provider")).toBeInTheDocument();
     expect(within(services).getByText("Worker")).toBeInTheDocument();
     expect(within(services).queryByText(/is down/)).not.toBeInTheDocument();
   });

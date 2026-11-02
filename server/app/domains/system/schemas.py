@@ -12,6 +12,7 @@ class Readiness(BaseModel):
 class SystemStatus(Readiness):
     worker: bool
     scheduler: bool
+    provider: bool
     model_configured: bool
 
 

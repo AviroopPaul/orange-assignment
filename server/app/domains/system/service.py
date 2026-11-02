@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -34,12 +35,14 @@ class SystemService:
         redis: Redis,
         heartbeats: Heartbeats,
         jobs: JobService,
+        provider_check: Callable[[], Awaitable[bool]],
         model_configured: bool,
     ) -> None:
         self._db = db
         self._redis = redis
         self._heartbeats = heartbeats
         self._jobs = jobs
+        self._provider_check = provider_check
         self._model_configured = model_configured
 
     async def readiness(self) -> Readiness:
@@ -57,6 +60,7 @@ class SystemService:
             **readiness.model_dump(),
             worker=worker,
             scheduler=scheduler,
+            provider=await self._provider_check(),
             model_configured=self._model_configured,
         )
 

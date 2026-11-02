@@ -8,6 +8,7 @@ export interface SystemStatus {
   redis: boolean;
   worker: boolean;
   scheduler: boolean;
+  provider: boolean;
   model_configured: boolean;
 }
 
@@ -28,6 +29,7 @@ const SERVICES: { key: keyof SystemStatus; label: string }[] = [
   { key: "redis", label: "Redis" },
   { key: "worker", label: "Worker" },
   { key: "scheduler", label: "Scheduler" },
+  { key: "provider", label: "Mock provider" },
   { key: "model_configured", label: "Gemini key" },
 ];
 

@@ -26,6 +26,7 @@ export const HEALTHY_STATUS = {
   redis: true,
   worker: true,
   scheduler: true,
+  provider: true,
   model_configured: true,
 };
 

@@ -2,8 +2,9 @@
 
 A chat agent that arranges home-service errands. This is the Orange founding AI engineer assignment.
 
-**Status:** the server, agent, LLM, workers and UI run. The tool gateway, mock provider, approvals and
-memory are not built yet, so the agent can only chat for now. It says so if you ask it to book.
+**Status:** the server, agent, LLM, workers, UI, mock provider and tool gateway run. The agent can
+search and compare providers, read reviews and list bookings. Approvals, booking and memory are not
+built yet, so it says so if you ask it to book.
 [BUILD_LOG.md](BUILD_LOG.md) tracks what is built and what is left against every requirement.
 
 The full design is in [docs/blueprint.html](docs/blueprint.html). Code layout and rules are in

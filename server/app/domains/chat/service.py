@@ -10,6 +10,7 @@ from app.domains.chat.ports import (
     ModelCallLimitExceeded,
     ModelUnavailable,
     SessionConflict,
+    ToolCallLimitExceeded,
     TurnLock,
 )
 from app.domains.chat.schemas import ChatRequest, ChatResponse, FailureReason, Outcome
@@ -30,6 +31,11 @@ FAILURE_REPLIES: dict[FailureReason, tuple[Outcome, str]] = {
     FailureReason.MODEL_CALL_LIMIT: (
         Outcome.LIMIT_REACHED,
         "I reached my step limit for this message. Nothing was changed. "
+        "Please try again, or simplify the request.",
+    ),
+    FailureReason.TOOL_CALL_LIMIT: (
+        Outcome.LIMIT_REACHED,
+        "I reached my limit of tool calls for this message. Nothing was changed. "
         "Please try again, or simplify the request.",
     ),
     FailureReason.RUN_DEADLINE: (
@@ -115,6 +121,8 @@ class ChatService:
             return "", FailureReason.RUN_DEADLINE
         except ModelCallLimitExceeded:
             return "", FailureReason.MODEL_CALL_LIMIT
+        except ToolCallLimitExceeded:
+            return "", FailureReason.TOOL_CALL_LIMIT
         except ModelUnavailable as error:
             logger.warning("model unavailable: %s", error)
             await recorder.event("model_unavailable", data={"error": str(error)[:500]})

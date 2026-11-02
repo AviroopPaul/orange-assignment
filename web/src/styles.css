@@ -481,6 +481,13 @@ code {
 
 .event-details dt {
   color: var(--muted);
+  flex: none;
+}
+
+.event-details .flagged dt,
+.event-details .flagged dd {
+  color: var(--warn);
+  font-weight: 600;
 }
 
 .event-details dd {

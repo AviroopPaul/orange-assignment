@@ -41,8 +41,49 @@ function useRunTrace(runId: string | null): TraceState {
 function EventDetails({ event }: { event: TraceEvent }) {
   const tools = event.data.requested_tools;
   const hasTools = Array.isArray(tools) && tools.length > 0;
+  const flags = event.data.injection_flags;
+  const hasFlags = Array.isArray(flags) && flags.length > 0;
+  const attempts = Number(event.data.attempts ?? 0);
   return (
     <dl className="event-details">
+      {event.data.status != null && (
+        <div>
+          <dt>Status</dt>
+          <dd>{String(event.data.error_code ?? event.data.status)}</dd>
+        </div>
+      )}
+      {event.data.caller != null && (
+        <div>
+          <dt>Caller</dt>
+          <dd>{String(event.data.caller)}</dd>
+        </div>
+      )}
+      {attempts > 1 && (
+        <div>
+          <dt>Attempts</dt>
+          <dd>{attempts}</dd>
+        </div>
+      )}
+      {event.data.ambiguous === true && (
+        <div>
+          <dt>Outcome</dt>
+          <dd>Unknown, check the source of truth</dd>
+        </div>
+      )}
+      {hasFlags && (
+        <div className="flagged">
+          <dt>Suspicious text</dt>
+          <dd>{(flags as string[]).join(", ")}</dd>
+        </div>
+      )}
+      {event.data.args != null && Object.keys(event.data.args as object).length > 0 && (
+        <div>
+          <dt>Arguments</dt>
+          <dd>
+            <code>{JSON.stringify(event.data.args)}</code>
+          </dd>
+        </div>
+      )}
       {event.latency_ms !== null && (
         <div>
           <dt>Latency</dt>

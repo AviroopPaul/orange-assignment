@@ -5,14 +5,21 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
 import fakeredis
+import httpx
 import pytest
+from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings
 from app.core.database import Base, Database
+from app.domains.gateway.client import ProviderClient
+from app.domains.gateway.service import DenyAllApprovals, ToolGateway
 from app.domains.jobs import models as job_models  # noqa: F401
 from app.domains.tracing import models as tracing_models  # noqa: F401
+from mock_provider.config import MockSettings
+from mock_provider.main import create_app as create_mock_app
+from mock_provider.models import MockBase
 
 
 class FakeClock:
@@ -78,3 +85,34 @@ async def redis() -> AsyncIterator[Redis]:
     client = fakeredis.FakeAsyncRedis()
     yield client
     await client.aclose()
+
+
+@pytest.fixture
+async def provider_app(clock: FakeClock) -> AsyncIterator[FastAPI]:
+    """The real mock provider on in-memory SQLite. Tests talk to it through its real routes."""
+    database = Database(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with database.engine.begin() as connection:
+        await connection.run_sync(MockBase.metadata.create_all)
+    settings = MockSettings(mock_eval_mode=True, mock_timeout_hang_s=0)
+    yield create_mock_app(settings=settings, db=database, real_now=clock.now)
+    await database.dispose()
+
+
+@pytest.fixture
+def provider_transport(provider_app: FastAPI) -> httpx.AsyncBaseTransport:
+    return httpx.ASGITransport(app=provider_app)
+
+
+@pytest.fixture
+async def gateway(provider_transport: httpx.AsyncBaseTransport) -> AsyncIterator[ToolGateway]:
+    client = ProviderClient("http://provider", timeout_s=1, transport=provider_transport)
+
+    async def no_wait(seconds: float) -> None:
+        return None
+
+    yield ToolGateway(client, DenyAllApprovals(), retry_backoff_s=0, sleep=no_wait)
+    await client.close()

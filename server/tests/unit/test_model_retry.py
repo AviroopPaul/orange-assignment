@@ -15,6 +15,7 @@ from app.core.database import Database
 from app.domains.agent.llm import build_model, build_request_config
 from app.domains.agent.runtime import AdkAgentRuntime
 from app.domains.chat.ports import ModelUnavailable
+from app.domains.gateway.service import ToolGateway
 from app.domains.tracing.service import TraceService
 from tests.conftest import FakeClock
 
@@ -48,12 +49,20 @@ async def stub() -> AsyncIterator[StubModelServer]:
     await runner.cleanup()
 
 
-async def run_turn(stub: StubModelServer, db: Database, clock: FakeClock) -> None:
+async def run_turn(
+    stub: StubModelServer, db: Database, clock: FakeClock, gateway: ToolGateway
+) -> None:
     settings = Settings(model_mode="live", google_api_key="test-key", model_name="stub-model")
     model = build_model(settings)
     model.base_url = stub.url  # type: ignore[attr-defined]
     runtime = AdkAgentRuntime(
-        model, InMemorySessionService(), 8, request_config=build_request_config(settings)
+        model,
+        InMemorySessionService(),
+        gateway,
+        max_model_calls=8,
+        max_tool_calls=12,
+        today=lambda: clock.now().date(),
+        request_config=build_request_config(settings),
     )
     recorder = await TraceService(db, clock).start_run("u1", "s1")
     await runtime.run_turn("u1", "s1", "hi", recorder)
@@ -61,18 +70,18 @@ async def run_turn(stub: StubModelServer, db: Database, clock: FakeClock) -> Non
 
 @pytest.mark.parametrize("status", [429, 503, 504])
 async def test_retryable_status_gets_exactly_one_retry(
-    stub: StubModelServer, db: Database, clock: FakeClock, status: int
+    stub: StubModelServer, db: Database, clock: FakeClock, gateway: ToolGateway, status: int
 ) -> None:
     stub.status = status
     with pytest.raises(ModelUnavailable):
-        await run_turn(stub, db, clock)
+        await run_turn(stub, db, clock, gateway)
     assert stub.attempts == 2
 
 
 async def test_permanent_error_is_not_retried(
-    stub: StubModelServer, db: Database, clock: FakeClock
+    stub: StubModelServer, db: Database, clock: FakeClock, gateway: ToolGateway
 ) -> None:
     stub.status = 404
     with pytest.raises(ModelUnavailable):
-        await run_turn(stub, db, clock)
+        await run_turn(stub, db, clock, gateway)
     assert stub.attempts == 1
