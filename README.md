@@ -2,8 +2,9 @@
 
 A chat agent that arranges home-service errands. This is the Orange founding AI engineer assignment.
 
-**Status:** the server, agent, LLM and workers run. The tool gateway, mock provider, approvals and
+**Status:** the server, agent, LLM, workers and UI run. The tool gateway, mock provider, approvals and
 memory are not built yet, so the agent can only chat for now. It says so if you ask it to book.
+[BUILD_LOG.md](BUILD_LOG.md) tracks what is built and what is left against every requirement.
 
 The full design is in [docs/blueprint.html](docs/blueprint.html). Code layout and rules are in
 [server/app/CLAUDE.md](server/app/CLAUDE.md).
@@ -19,6 +20,9 @@ export GOOGLE_API_KEY=your-key
 ```bash
 make up
 ```
+
+Open the app at `http://localhost:3000`. It shows chat and the run trace side by side, plus the state
+of each service.
 
 The API is at `http://localhost:8000`, with docs at `/docs`. Without a key the stack still starts, and
 chat replies that no key is set.
@@ -39,9 +43,11 @@ curl -s localhost:8000/runs/RUN_ID/trace
 |---|---|
 | `make up` | Build, start and wait until every service is healthy |
 | `make smoke` | Check the running stack end to end, using the live model |
-| `make test` | Unit tests. No Docker or network needed |
+| `make test` | Server unit tests. No Docker or network needed |
+| `make test-web` | UI tests. No Docker or network needed |
 | `make test-integration` | Tests on real PostgreSQL and Redis, including killed workers and Redis wipes |
-| `make check` | Lint, format, types, import rules and unit tests |
+| `make check` | Lint, format, types, import rules and all unit tests |
+| `make web-dev` | UI with hot reload on port 5173, against the running API |
 | `make logs` / `make ps` | Follow logs / show service state |
 | `make down` | Stop and keep data |
 | `make reset` | Delete all data and start again |
@@ -56,6 +62,7 @@ curl -s localhost:8000/runs/RUN_ID/trace
 | `api` | FastAPI: chat turns (ADK inside), traces, health |
 | `worker` | Runs jobs. Does not load ADK |
 | `scheduler` | Enqueues the sweep every 15 s. Run exactly one copy |
+| `web` | nginx serving the React app on port 3000, and proxying `/api` to `api` |
 
 ## Change the schema
 

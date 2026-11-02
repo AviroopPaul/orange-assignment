@@ -7,6 +7,8 @@ __pycache__/
 .ruff_cache/
 .import_linter_cache/
 .DS_Store
+node_modules/
+dist/
 
 # The brief belongs to Orange, so it stays out of the repo.
 *.pdf
