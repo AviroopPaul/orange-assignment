@@ -53,8 +53,8 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
 
 ## Not built yet
 
-Tool gateway, mock provider, approvals, saga, memory, ContextAssembler, workflow state machine, SSE,
-JSONL trace files, UI. Until ContextAssembler exists, ADK sends the full session history to the model.
+See `BUILD_LOG.md` at the repo root for the full list. Until ContextAssembler exists, ADK sends the full
+session history to the model.
 
 ## Checks
 

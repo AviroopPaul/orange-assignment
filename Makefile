@@ -1,11 +1,12 @@
 # `docker compose` when the plugin works, otherwise the standalone binary.
 COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: up down logs reset ps test test-integration check smoke
+.PHONY: up down logs reset ps test test-web test-integration check smoke web-dev
 
 up:
 	$(COMPOSE) up --build -d --wait
-	@echo "API is ready at http://localhost:8000 (docs at /docs)"
+	@echo "App is ready at http://localhost:3000"
+	@echo "API is at http://localhost:8000 (docs at /docs)"
 
 down:
 	$(COMPOSE) down
@@ -23,12 +24,20 @@ reset:
 test:
 	cd server && uv run pytest
 
+test-web:
+	cd web && npm test
+
+# Hot reload on port 5173, against the api from `make up`.
+web-dev:
+	cd web && npm run dev
+
 test-integration:
 	$(COMPOSE) --profile test build tests
 	$(COMPOSE) --profile test run --rm tests
 
 check:
 	cd server && ./scripts/check.sh
+	cd web && npm run typecheck && npm test
 
 smoke:
 	cd server && uv run python scripts/smoke.py

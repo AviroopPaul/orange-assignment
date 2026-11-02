@@ -108,6 +108,23 @@ services:
     mem_limit: 256m
     restart: unless-stopped
 
+  web:
+    build:
+      context: ./web
+    image: errand-agent-web
+    ports:
+      - "127.0.0.1:3000:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 64m
+    restart: unless-stopped
+
   tests:
     profiles: ["test"]
     build:
