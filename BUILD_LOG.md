@@ -11,11 +11,11 @@ What is built, what is left, and how we know. Requirement IDs come from the [blu
 
 ## Where we stand
 
-Last updated: 2 Nov 2026.
+Last updated: 3 Nov 2026.
 
 | Area | Done | Partial | Not started | Total |
 |---|---|---|---|---|
-| Functional requirements | 0 | 3 | 11 | 14 |
+| Functional requirements | 1 | 3 | 10 | 14 |
 | Non-functional requirements | 1 | 10 | 9 | 20 |
 | Eval scenarios | 0 | 9 | 27 | 36 |
 | Eval invariants | 0 | 0 | 8 | 8 |
@@ -57,7 +57,7 @@ Run `make up`, then open `http://localhost:3000`.
 | F11 | Explicit vs inferred | Not started | | `propose_memory` with the quote check |
 | F12 | Proactive cancellation | Not started | Worker and scheduler run, and the sweep job proves it | Provider poll job, notify policy, replacement search, notifications |
 | F13 | Real LLM drives the agent | Partial | Gemini through ADK reads requests and replies | It has no tools to choose from yet |
-| F14 | Mock tools match the contract | Not started | `mock_provider` database exists, empty | Service, all 8 tools, seeded outcomes, scenarios, fake clock, 70/15/15 test |
+| F14 | Mock tools match the contract | Done | All 8 tools in their own container, with their own database. Outcomes come from `hash(seed, key, attempt)`. Scenarios force any outcome. Clock can move. Split tested over 100,000 keys. Races, a real client timeout and a server kill tested on PostgreSQL | |
 
 ## Non-functional requirements
 
@@ -79,20 +79,20 @@ Run `make up`, then open `http://localhost:3000`.
 | N14 | Tokens and cost | Done | Usage and cost per call and per run. Tested with live and scripted models | |
 | N15 | Survive model and tool failure | Partial | Request timeout, exactly one retry on 429, 503 and 504, clear reply. Tested against a local server and a stuck model | Tool failure rules (needs the saga) |
 | N16 | Safe concurrency | Partial | Redis turn lock, `StaleSessionError` backstop, job leases with fencing. Only `api` writes ADK sessions | Workflow version check, booking attempt leases |
-| N17 | Reproducible offline evals | Partial | Scripted model through the real ADK loop. Injectable clock. Unit tests need no network | Recorded Gemini replies, seeded mock, `evals` service on an internal network |
+| N17 | Reproducible offline evals | Partial | Scripted model through the real ADK loop. Seeded mock with scenarios. Injectable clock. Unit tests need no network | Recorded Gemini replies, `evals` service on an internal network |
 | N18 | Survive Redis or PostgreSQL loss | Partial | Redis wipe, Redis down and PostgreSQL down all checked on the live stack. Redis wipe has automated tests | Automated E34 and E35 on the full stack, with bookings in flight |
-| N19 | One-command local run | Partial | `make up` from clean, with ordered health checks. Migrations safe to repeat | Automated clean-start check. `mock-provider` is not in the stack yet |
+| N19 | One-command local run | Partial | `make up` from clean, with ordered health checks, including `mock-provider`. Migrations safe to repeat | Automated clean-start check |
 | N20 | Secrets stay out | Partial | Key comes from the environment at run time and is hidden in `repr`. Manual scan of repo, image history and trace events found nothing | Automated scan. Trace sanitizing, because refused tool arguments are stored as sent |
 
 ## Components
 
 | Component | Status | Notes |
 |---|---|---|
-| `postgres`, `redis`, `migrate` | Done | Three databases. `mock_provider` is empty |
+| `postgres`, `redis`, `migrate` | Done | Three databases. `migrate` also creates the mock's tables and demo bookings |
 | `api` | Partial | Has `/chat`, `/runs/{id}/trace`, `/healthz`, `/readyz`, `/system/*`. Missing `/approvals/{id}`, `/memories`, `/events` |
 | `worker`, `scheduler` | Partial | Outbox, leases and sweep work. Saga and proactive jobs are missing |
 | `web` | Partial | Chat, trace after each turn, status bar. Missing approval card, memory page, live trace through SSE |
-| `mock-provider` | Not started | |
+| `mock-provider` | Done | Port 8100. `/admin` is off unless `MOCK_EVAL_MODE=true` |
 | `evals` | Not started | |
 | Tool gateway | Not started | Left out on request |
 | ContextAssembler | Not started | |
@@ -136,10 +136,16 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **Added `tracing` early:** it was needed to prove the LLM works.
 - **Added a ping job and `/system/*`:** these prove the job path, and the UI uses them.
 - **Chat history in the browser:** the server has no history endpoint, so the UI keeps the visible chat in `localStorage`. The model's memory of the chat is on the server.
+- **Caller identity on the mock:** `hold_slot`, `book` and the others need to know whose booking it is, but their inputs are fixed by the brief. So identity travels in an `X-User-Id` header, like an auth header, and the inputs stay as specified.
+- **Mock behaviour the brief leaves open:**
+  - Retrying after a timeout that did not book draws a new outcome, because the attempt number is part of the hash. Otherwise the retry could never succeed.
+  - A key the provider never saw reports `not_booked`, which is what crash recovery needs.
+  - `reschedule` conflicts at 12:00 by default, or on the exact slots a scenario sets.
+- **Simulated provider cancels stay behind `/admin`:** the demo must set `MOCK_EVAL_MODE=true` to trigger one.
 
 ## Suggested order
 
-1. **Mock provider:** all 8 tools, seeded outcomes, scenarios, fake clock.
+1. **Mock provider:** done.
 2. **Tool gateway:** allowlist, caller rights, budget, retries, sanitizing, tracing.
 3. **Workflow and search:** state machine, `update_request`, provider comparison.
 4. **Approvals and booking saga:** the core of the assignment.
@@ -150,6 +156,13 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 9. **Design note, trace excerpt, demo and transcript.**
 
 ## Log
+
+### 3 Nov 2026: Mock provider
+
+- Added the `mock-provider` service: all 8 contract tools, with its own package, database and migrations. `app` can only reach it over HTTP, and an import rule enforces that.
+- Added 40 providers across 5 services. Every service has a provider with a prompt injection in a review. Added past and upcoming bookings for `demo-user`.
+- **Proof:** 110 contract tests follow the brief line by line. 8 integration tests on PostgreSQL cover 10 concurrent holds, 10 concurrent books with one key, concurrent cancels, a real client timeout that still leaves a booking, and a server kill.
+- **Found:** a worker recovery test failed on a second run because tests shared a job row. Fixed the isolation, and integration tests now pass twice in a row. See `BUGS.md`.
 
 ### 2 Nov 2026: React UI and this log
 

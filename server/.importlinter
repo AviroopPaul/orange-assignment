@@ -1,6 +1,20 @@
 [importlinter]
-root_package = app
+root_packages =
+    app
+    mock_provider
 include_external_packages = True
+
+[importlinter:contract:mock-is-external]
+name = the app reaches the mock provider only over HTTP
+type = forbidden
+source_modules = app
+forbidden_modules = mock_provider
+
+[importlinter:contract:mock-knows-no-domain]
+name = the mock provider knows nothing about our domains
+type = forbidden
+source_modules = mock_provider
+forbidden_modules = app.domains
 
 [importlinter:contract:core-is-independent]
 name = core does not import domains

@@ -8,6 +8,7 @@ x-server: &server
   environment: &server-env
     ERRAND_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/errand
     ADK_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/adk_sessions
+    MOCK_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/mock_provider
     REDIS_URL: redis://redis:6379/0
     GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     MODEL_NAME: ${MODEL_NAME:-gemini-3.5-flash-lite}
@@ -46,12 +47,37 @@ services:
 
   migrate:
     <<: *server
-    command: ["python", "-m", "app.migrate"]
+    command: ["sh", "-c", "python -m app.migrate && python -m mock_provider.migrate"]
     depends_on:
       postgres:
         condition: service_healthy
     mem_limit: 512m
     restart: "no"
+
+  mock-provider:
+    <<: *server
+    command: ["uvicorn", "mock_provider.main:app", "--host", "0.0.0.0", "--port", "8100"]
+    environment:
+      MOCK_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/mock_provider
+      # Scenario, clock and provider-cancel routes stay off unless asked for.
+      MOCK_EVAL_MODE: ${MOCK_EVAL_MODE:-false}
+    ports:
+      - "127.0.0.1:8100:8100"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.urlopen('http://127.0.0.1:8100/healthz', timeout=4)"
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    mem_limit: 256m
+    restart: unless-stopped
 
   api:
     <<: *server
@@ -135,6 +161,8 @@ services:
     environment:
       ERRAND_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/errand_test
       ADK_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/adk_sessions_test
+      MOCK_DATABASE_URL: postgresql+asyncpg://errand:${POSTGRES_PASSWORD:-errand}@postgres:5432/mock_provider_test
+      MOCK_EVAL_MODE: "true"
       REDIS_URL: redis://redis:6379/1
       MODEL_MODE: scripted
       GOOGLE_API_KEY: ""

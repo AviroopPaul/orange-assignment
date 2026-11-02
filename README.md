@@ -57,6 +57,7 @@ curl -s localhost:8000/runs/RUN_ID/trace
 | Service | Job |
 |---|---|
 | `postgres` | Source of truth: databases `errand`, `adk_sessions`, `mock_provider` |
+| `mock-provider` | Stands in for an outside provider: the 8 tools from the brief, on port 8100 |
 | `redis` | Job stream and turn lock. It never holds the truth |
 | `migrate` | One-shot job: Alembic upgrade and ADK tables |
 | `api` | FastAPI: chat turns (ADK inside), traces, health |

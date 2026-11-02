@@ -12,12 +12,13 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from redis.asyncio import Redis
+from sqlalchemy import delete
 
 from app.container import build_core
 from app.core.config import Settings
 from app.core.database import Database
 from app.domains.jobs.broker import build_broker
-from app.domains.jobs.models import JobStatus
+from app.domains.jobs.models import JobStatus, OutboxJob
 from app.domains.jobs.service import JobService
 
 pytestmark = pytest.mark.integration
@@ -55,6 +56,9 @@ async def jobs(settings: Settings) -> AsyncIterator[JobService]:
     core = build_core(
         settings, broker=broker, redis=redis, db=Database(settings.errand_database_url)
     )
+    # The test database outlives a run, and a job left by another test would be swept up here.
+    async with core.db.session_scope() as session:
+        await session.execute(delete(OutboxJob))
     yield core.jobs
     await broker.shutdown()
     await core.close()
