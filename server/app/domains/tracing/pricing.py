@@ -12,6 +12,7 @@ class Price:
 PRICES: dict[str, Price] = {
     "gemini-3.5-flash-lite": Price(0.30, 2.50),
     "gemini-2.5-flash": Price(0.30, 2.50),
+    "gemini-3-flash-preview": Price(0.50, 3.00),
 }
 
 
