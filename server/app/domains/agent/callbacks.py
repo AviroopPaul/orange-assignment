@@ -12,6 +12,7 @@ from google.adk.tools.tool_context import ToolContext
 
 from app.domains.gateway.service import CallContext, ToolBudgetExhausted, ToolGateway
 from app.domains.tracing.service import ModelUsage, RunRecorder
+from app.domains.workflow.service import WorkflowService
 
 
 @dataclass
@@ -21,6 +22,8 @@ class TurnTelemetry:
     gateway: ToolGateway
     tool_context: CallContext
     model_tool_names: frozenset[str]
+    workflow: WorkflowService
+    session_id: str
     call_started_at: float = 0.0
 
 

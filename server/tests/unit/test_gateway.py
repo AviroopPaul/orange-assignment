@@ -142,7 +142,7 @@ async def scenario(app: FastAPI, **config: object) -> None:
 
 
 def test_every_contract_tool_is_registered() -> None:
-    assert set(TOOLS) == {
+    assert {name for name, spec in TOOLS.items() if not spec.local} == {
         "search_providers",
         "get_provider",
         "hold_slot",
@@ -163,7 +163,14 @@ def test_consequential_tools_need_approval_and_only_the_saga_can_call_them(tool:
 
 def test_model_can_only_reach_read_tools() -> None:
     allowed = {name for name, spec in TOOLS.items() if Caller.MODEL in spec.callers}
-    assert allowed == {"search_providers", "get_provider", "list_bookings", "get_booking_status"}
+    assert allowed == {
+        "update_request",
+        "resolve_dates",
+        "search_providers",
+        "get_provider",
+        "list_bookings",
+        "get_booking_status",
+    }
 
 
 def test_book_and_hold_are_never_retried_blindly() -> None:
@@ -679,6 +686,24 @@ def test_text_is_bounded_and_hidden_characters_are_removed() -> None:
     assert len(long) == 501
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["2026-11-05", "2026-11-05T09:00:00+05:30", "booking 2026-11-05 at 10:00", "1500", "4.5"],
+)
+def test_trace_keeps_dates_slots_and_numbers(value: str) -> None:
+    """Regression: the phone mask once matched dates, so traces showed [phone] for every slot."""
+    assert for_trace(value) == value
+
+
+@pytest.mark.parametrize(
+    "value", ["+91 98765 43210", "9876543210", "98765-43210", "call 080 1234 5678 now"]
+)
+def test_trace_masks_phone_numbers(value: str) -> None:
+    masked = for_trace(value)
+    assert "[phone]" in masked
+    assert not any(run in masked for run in ("98765", "43210", "5678"))
+
+
 def test_trace_masks_personal_details_and_bounds_size() -> None:
     masked = for_trace({"note": "call me on +91 98765 43210 or a.b@example.com"})
     assert "98765" not in masked["note"]
@@ -737,3 +762,85 @@ async def test_reachability_check(gateway: ToolGateway) -> None:
     assert await gateway.is_provider_reachable()
     down, _ = scripted_gateway([httpx.ConnectError("refused")])
     assert not await down.is_provider_reachable()
+
+
+# Local tools and guards
+
+
+async def echo(payload: dict) -> dict:
+    return {"saved": payload}
+
+
+async def test_local_tool_is_counted_traced_and_never_sent(
+    counted: tuple[ToolGateway, CountingTransport],
+    recorder: RunRecorder,
+    db: Database,
+    clock: FakeClock,
+) -> None:
+    gateway, transport = counted
+    ctx = context(recorder=recorder)
+    result = await gateway.call_local("update_request", {"area": "HSR"}, ctx, echo)
+
+    assert result.ok
+    assert result.data == {"saved": {"area": "HSR"}}
+    assert ctx.budget.used == 1
+    assert transport.requests == []
+    trace = await TraceService(db, clock).get_trace(recorder.run_id)
+    assert (trace.events[0].kind, trace.events[0].name) == ("tool_call", "update_request")
+
+
+async def test_local_tool_error_is_reported_as_an_error(
+    gateway: ToolGateway, recorder: RunRecorder, db: Database, clock: FakeClock
+) -> None:
+    async def refuse(payload: dict) -> dict:
+        return {"error": "date_not_stated", "message": "Ask the user."}
+
+    result = await gateway.call_local(
+        "resolve_dates", {"phrase": "soon"}, context(recorder=recorder), refuse
+    )
+    assert result.status == ToolStatus.ERROR
+    assert (result.error_code, result.message) == ("date_not_stated", "Ask the user.")
+    trace = await TraceService(db, clock).get_trace(recorder.run_id)
+    assert trace.events[0].data["error_code"] == "date_not_stated"
+
+
+async def test_local_tool_rejects_fields_outside_its_schema(gateway: ToolGateway) -> None:
+    """The model cannot set the workflow state by passing an extra field."""
+    result = await gateway.call_local("update_request", {"state": "done"}, context(), echo)
+    assert result.error_code == RefusalReason.INVALID_ARGUMENTS
+
+
+async def test_local_tool_cannot_be_reached_as_a_provider_call(
+    counted: tuple[ToolGateway, CountingTransport],
+) -> None:
+    gateway, transport = counted
+    result = await gateway.call("update_request", {"area": "HSR"}, context())
+    assert result.error_code == RefusalReason.NOT_ALLOWED
+    assert transport.requests == []
+
+
+async def test_provider_tool_cannot_be_run_as_a_local_one(gateway: ToolGateway) -> None:
+    result = await gateway.call_local("book", {}, context(Caller.MODEL), echo)
+    assert result.status == ToolStatus.REFUSED
+
+
+async def test_only_the_model_calls_update_request(gateway: ToolGateway) -> None:
+    result = await gateway.call_local("update_request", {}, context(Caller.SAGA), echo)
+    assert result.error_code == RefusalReason.NOT_ALLOWED
+
+
+async def test_guard_refusal_is_not_sent_and_carries_its_message(
+    counted: tuple[ToolGateway, CountingTransport],
+) -> None:
+    class Block:
+        async def check(self, tool: str, args: dict) -> tuple[RefusalReason, str]:
+            return RefusalReason.MISSING_DETAILS, "Ask the user for: area."
+
+    gateway, transport = counted
+    ctx = context()
+    ctx.guard = Block()
+    result = await gateway.call("search_providers", {}, ctx)
+    assert result.error_code == RefusalReason.MISSING_DETAILS
+    assert result.message == "Ask the user for: area."
+    assert transport.requests == []
+    assert ctx.budget.used == 1

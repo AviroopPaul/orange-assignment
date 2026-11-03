@@ -13,7 +13,9 @@ from app.domains.gateway.schemas import (
     HoldSlotArgs,
     ListBookingsArgs,
     RescheduleArgs,
+    ResolveDatesArgs,
     SearchProvidersArgs,
+    UpdateRequestArgs,
 )
 
 EVERYONE = frozenset(Caller)
@@ -43,9 +45,13 @@ class ToolSpec:
     retry: RetryPolicy
     side_effect: bool = False
     requires_approval: bool = False
+    # Answered by our own code, through call_local. Nothing reaches the provider.
+    local: bool = False
 
 
 _SPECS = (
+    ToolSpec("update_request", UpdateRequestArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True),
+    ToolSpec("resolve_dates", ResolveDatesArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True),
     ToolSpec("search_providers", SearchProvidersArgs, EVERYONE, READ_RETRY),
     ToolSpec("get_provider", GetProviderArgs, EVERYONE, READ_RETRY),
     ToolSpec("list_bookings", ListBookingsArgs, EVERYONE, READ_RETRY),

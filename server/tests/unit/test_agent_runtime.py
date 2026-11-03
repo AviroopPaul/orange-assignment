@@ -14,6 +14,7 @@ from app.domains.agent.scripted import ScriptedLlm, ToolCall
 from app.domains.chat.ports import ModelCallLimitExceeded, ModelUnavailable, SessionConflict
 from app.domains.gateway.service import ToolGateway
 from app.domains.tracing.service import RunRecorder, TraceService
+from app.domains.workflow.service import WorkflowService
 from tests.conftest import FakeClock
 
 
@@ -28,7 +29,7 @@ async def recorder(traces: TraceService) -> RunRecorder:
 
 
 @pytest.fixture
-def runtime_with(gateway: ToolGateway, clock: FakeClock):
+def runtime_with(gateway: ToolGateway, workflow: WorkflowService, clock: FakeClock):
     def build(
         script: list, sessions: InMemorySessionService | None = None, max_calls: int = 8
     ) -> tuple[AdkAgentRuntime, ScriptedLlm, InMemorySessionService]:
@@ -38,6 +39,7 @@ def runtime_with(gateway: ToolGateway, clock: FakeClock):
             model,
             sessions,
             gateway,
+            workflow,
             max_model_calls=max_calls,
             max_tool_calls=12,
             today=lambda: clock.now().date(),
@@ -145,7 +147,7 @@ def test_live_model_has_a_retry_and_a_request_timeout() -> None:
 
     assert model.model == "gemini-x"
     assert model.retry_options.attempts == 2  # type: ignore[attr-defined]
-    assert set(model.retry_options.http_status_codes) == {429, 503, 504}  # type: ignore[attr-defined]
+    assert set(model.retry_options.http_status_codes) == {503, 504}  # type: ignore[attr-defined]
     http_options = build_request_config(settings).http_options
     assert http_options is not None and http_options.timeout == 30_000
 

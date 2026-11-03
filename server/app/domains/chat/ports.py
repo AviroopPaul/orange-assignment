@@ -14,6 +14,14 @@ class ToolCallLimitExceeded(Exception):
     pass
 
 
+class ModelRateLimited(Exception):
+    """The model's usage limit was hit, and the wait is too long to do inside this turn."""
+
+    def __init__(self, retry_after_s: float | None) -> None:
+        super().__init__(f"rate limited, retry after {retry_after_s} s")
+        self.retry_after_s = retry_after_s
+
+
 class ModelUnavailable(Exception):
     """The model failed or timed out after its retry."""
 

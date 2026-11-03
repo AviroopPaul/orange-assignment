@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     model_name: str = "gemini-3.5-flash-lite"
     model_request_timeout_s: float = 30
     model_attempts: int = 2
+    model_rate_limit_max_wait_s: float = 30
 
     mock_provider_url: str = "http://localhost:8100"
     tool_timeout_s: float = 10
@@ -48,6 +49,8 @@ class Settings(BaseSettings):
     def _limits_must_agree(self) -> Self:
         if self.model_request_timeout_s < 10:
             raise ValueError("model_request_timeout_s must be at least 10: Gemini rejects less")
+        if self.model_rate_limit_max_wait_s >= self.run_deadline_s:
+            raise ValueError("model_rate_limit_max_wait_s must be shorter than run_deadline_s")
         if self.turn_lock_ttl_s <= self.run_deadline_s:
             raise ValueError("turn_lock_ttl_s must exceed run_deadline_s, or two turns can collide")
         if self.job_lease_s < self.job_time_limit_s:

@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.database import Base, UtcDateTime
 from app.domains.jobs import models as job_models  # noqa: F401
 from app.domains.tracing import models as tracing_models  # noqa: F401
+from app.domains.workflow import models as workflow_models  # noqa: F401
 
 target_metadata = Base.metadata
 

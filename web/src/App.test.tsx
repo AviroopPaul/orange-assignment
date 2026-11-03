@@ -137,6 +137,56 @@ describe("chat", () => {
     expect(screen.getByText("The AI model is not responding right now.")).toBeInTheDocument();
   });
 
+  it("does not flag a turn that simply asks the user a question", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply("run-1", "Which area are you in?", { outcome: "needs_input" }),
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+    });
+    render(<App />);
+
+    await say("I need a plumber");
+
+    expect(await screen.findByText("Which area are you in?")).toBeInTheDocument();
+    expect(screen.queryByText("Needs input")).not.toBeInTheDocument();
+  });
+
+  it("shows when the model is busy, and when to try again", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply(
+        "run-1",
+        "The AI model is busy because we hit its usage limit. Please try again in about 46 seconds.",
+        { outcome: "limit_reached", reason: "model_rate_limited", retry_after_s: 46 },
+      ),
+      "GET /api/runs/run-1/trace": () => ({
+        json: traceFor("run-1", {
+          events: [
+            {
+              seq: 1,
+              kind: "model_rate_limited",
+              name: null,
+              data: { retry_after_s: 46 },
+              latency_ms: null,
+              input_tokens: null,
+              output_tokens: null,
+              estimated_cost_usd: null,
+              created_at: "2026-11-02T12:00:01+00:00",
+            },
+          ],
+        }),
+      }),
+    });
+    render(<App />);
+
+    await say("hello");
+
+    expect(await screen.findByText(/in about 46 seconds/)).toBeInTheDocument();
+    expect(screen.getByText("Limit reached")).toBeInTheDocument();
+    expect(await screen.findByText("Rate limited")).toBeInTheDocument();
+    expect(screen.getByText("46 s")).toBeInTheDocument();
+  });
+
   it("shows the server's message when the database is down and keeps the draft", async () => {
     fakeApi({
       ...STATUS_OK,
@@ -308,6 +358,36 @@ describe("trace", () => {
     expect(screen.getByText("get_provider")).toBeInTheDocument();
     expect(screen.getByText("ignore_instructions, skip_approval")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
+  });
+
+  it("shows state changes", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply("run-1", "Searching."),
+      "GET /api/runs/run-1/trace": () => ({
+        json: traceFor("run-1", {
+          events: [
+            {
+              seq: 1,
+              kind: "state_transition",
+              name: "searching",
+              data: { from: "intake", to: "searching" },
+              latency_ms: null,
+              input_tokens: null,
+              output_tokens: null,
+              estimated_cost_usd: null,
+              created_at: "2026-11-02T12:00:01+00:00",
+            },
+          ],
+        }),
+      }),
+    });
+    render(<App />);
+
+    await say("go");
+
+    expect(await screen.findByText("State change")).toBeInTheDocument();
+    expect(screen.getByText("intake to searching")).toBeInTheDocument();
   });
 
   it("warns when a tool's outcome is unknown", async () => {

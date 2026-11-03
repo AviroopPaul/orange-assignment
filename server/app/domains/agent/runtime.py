@@ -16,10 +16,12 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.domains.agent import callbacks
+from app.domains.agent.llm import retry_delay_s
 from app.domains.agent.prompts import render_system_prompt
 from app.domains.agent.tools import MODEL_TOOLS
 from app.domains.chat.ports import (
     ModelCallLimitExceeded,
+    ModelRateLimited,
     ModelUnavailable,
     SessionConflict,
     ToolCallLimitExceeded,
@@ -27,6 +29,7 @@ from app.domains.chat.ports import (
 from app.domains.gateway.schemas import Caller
 from app.domains.gateway.service import CallContext, ToolBudget, ToolBudgetExhausted, ToolGateway
 from app.domains.tracing.service import RunRecorder
+from app.domains.workflow.service import WorkflowSearchGuard, WorkflowService
 
 APP_NAME = "errand-agent"
 MODEL_TOOL_NAMES = frozenset(tool.__name__ for tool in MODEL_TOOLS)
@@ -37,8 +40,12 @@ def build_agent(
     request_config: types.GenerateContentConfig | None,
     today: Callable[[], date],
 ) -> LlmAgent:
-    def instruction(context: ReadonlyContext) -> str:
-        return render_system_prompt(today())
+    async def instruction(context: ReadonlyContext) -> str:
+        turn = callbacks.current_turn.get()
+        if turn is None:
+            return render_system_prompt(today())
+        snapshot = await turn.workflow.snapshot(turn.tool_context.user_id, turn.session_id)
+        return render_system_prompt(today(), snapshot.for_prompt())
 
     return LlmAgent(
         name="errand_agent",
@@ -59,6 +66,7 @@ class AdkAgentRuntime:
         model: BaseLlm,
         session_service: BaseSessionService,
         gateway: ToolGateway,
+        workflow: WorkflowService,
         max_model_calls: int,
         max_tool_calls: int,
         today: Callable[[], date],
@@ -66,6 +74,7 @@ class AdkAgentRuntime:
     ) -> None:
         self._sessions = session_service
         self._gateway = gateway
+        self._workflow = workflow
         self._model_name = model.model
         self._max_tool_calls = max_tool_calls
         self._run_config = RunConfig(max_llm_calls=max_model_calls)
@@ -83,9 +92,16 @@ class AdkAgentRuntime:
             caller=Caller.MODEL,
             budget=ToolBudget(self._max_tool_calls),
             recorder=recorder,
+            guard=WorkflowSearchGuard(self._workflow, user_id, session_id),
         )
         turn = callbacks.TurnTelemetry(
-            recorder, self._model_name, self._gateway, tool_context, MODEL_TOOL_NAMES
+            recorder,
+            self._model_name,
+            self._gateway,
+            tool_context,
+            MODEL_TOOL_NAMES,
+            self._workflow,
+            session_id,
         )
         turn_token = callbacks.current_turn.set(turn)
         try:
@@ -97,6 +113,10 @@ class AdkAgentRuntime:
             raise ModelCallLimitExceeded(str(error)) from error
         except StaleSessionError as error:
             raise SessionConflict(str(error)) from error
+        except genai_errors.ClientError as error:
+            if error.code == 429:
+                raise ModelRateLimited(retry_delay_s(error)) from error
+            raise ModelUnavailable(f"{type(error).__name__}: {error}") from error
         except (genai_errors.APIError, httpx.TransportError) as error:
             raise ModelUnavailable(f"{type(error).__name__}: {error}") from error
         finally:

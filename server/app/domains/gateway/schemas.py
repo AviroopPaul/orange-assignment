@@ -31,6 +31,8 @@ class RefusalReason(StrEnum):
     WRONG_USER = "wrong_user"
     APPROVAL_REQUIRED = "approval_required"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    MISSING_DETAILS = "missing_details"
+    REQUEST_MISMATCH = "request_mismatch"
 
 
 class _Strict(BaseModel):
@@ -86,6 +88,20 @@ class RescheduleArgs(_Strict):
 
 class ListBookingsArgs(_Strict):
     user_id: str = Field(min_length=1, max_length=64)
+
+
+class UpdateRequestArgs(_Strict):
+    service: str | None = Field(default=None, min_length=1, max_length=60)
+    area: str | None = Field(default=None, min_length=1, max_length=100)
+    earliest_time: str | None = Field(default=None, max_length=5)
+    latest_time: str | None = Field(default=None, max_length=5)
+    max_budget: int | None = Field(default=None, gt=0)
+    preferences: list[str] | None = Field(default=None, max_length=20)
+    clear_fields: list[str] | None = Field(default=None, max_length=8)
+
+
+class ResolveDatesArgs(_Strict):
+    phrase: str = Field(min_length=1, max_length=100)
 
 
 @dataclass(frozen=True)

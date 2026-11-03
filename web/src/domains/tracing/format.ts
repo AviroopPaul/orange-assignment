@@ -20,6 +20,12 @@ const KIND_LABELS: Record<string, string> = {
   tool_call: "Tool call",
   tool_refused: "Tool refused",
   tool_error: "Tool error",
+  state_transition: "State change",
+  dates_proposed: "Dates proposed",
+  dates_confirmed: "Dates confirmed",
+  dates_rejected: "Dates rejected",
+  dates_unclear: "Answer not clear",
+  model_rate_limited: "Rate limited",
   unexpected_error: "Unexpected error",
   outcome: "Outcome",
 };

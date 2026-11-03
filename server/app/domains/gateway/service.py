@@ -49,6 +49,13 @@ class CallContext:
     budget: ToolBudget
     recorder: RunRecorder | None = None
     approval_token: str | None = field(default=None, repr=False)
+    guard: "ToolGuard | None" = None
+
+
+class ToolGuard(Protocol):
+    """A run's extra rule for a tool. Returns why a call must be refused, or None to allow it."""
+
+    async def check(self, tool: str, args: dict[str, Any]) -> tuple[RefusalReason, str] | None: ...
 
 
 class ApprovalVerifier(Protocol):
@@ -80,6 +87,46 @@ class ToolGateway:
         self._sleep = sleep
 
     async def call(self, tool: str, args: dict[str, Any], context: CallContext) -> ToolResult:
+        admitted = await self._admit(tool, args, context)
+        if isinstance(admitted, ToolResult):
+            return admitted
+        spec, payload = admitted
+        if spec.local:
+            return await self._refuse(tool, args, context, RefusalReason.NOT_ALLOWED)
+        return await self._execute(spec, payload, context)
+
+    async def call_local(
+        self,
+        tool: str,
+        args: dict[str, Any],
+        context: CallContext,
+        handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
+    ) -> ToolResult:
+        """A tool our own code answers. It passes the same checks and is counted and traced."""
+        admitted = await self._admit(tool, args, context)
+        if isinstance(admitted, ToolResult):
+            return admitted
+        spec, payload = admitted
+        if not spec.local:
+            return await self._refuse(tool, args, context, RefusalReason.NOT_ALLOWED)
+        started_at = monotonic()
+        data = await handler(payload)
+        if "error" in data:
+            result = ToolResult(
+                tool=tool,
+                status=ToolStatus.ERROR,
+                error_code=str(data["error"]),
+                message=str(data.get("message", "")),
+                attempts=1,
+            )
+        else:
+            result = ToolResult(tool=tool, status=ToolStatus.OK, data=data, attempts=1)
+        await self._record_call(tool, payload, context, result, started_at)
+        return result
+
+    async def _admit(
+        self, tool: str, args: dict[str, Any], context: CallContext
+    ) -> tuple[ToolSpec, dict[str, Any]] | ToolResult:
         if context.budget.exhausted:
             await self._refuse(tool, args, context, RefusalReason.BUDGET_EXHAUSTED)
             raise ToolBudgetExhausted(f"limit of {context.budget.limit} tool calls reached")
@@ -91,6 +138,11 @@ class ToolGateway:
             return await self._refuse(tool, args, context, RefusalReason.UNKNOWN_TOOL)
         if context.caller not in spec.callers:
             return await self._refuse(tool, args, context, RefusalReason.NOT_ALLOWED)
+        if context.guard is not None:
+            blocked = await context.guard.check(tool, args)
+            if blocked is not None:
+                reason, detail = blocked
+                return await self._refuse(tool, args, context, reason, detail=detail)
 
         try:
             validated = spec.args_model.model_validate(args)
@@ -109,7 +161,7 @@ class ToolGateway:
         if spec.requires_approval and not await self._approved(tool, payload, context):
             return await self._refuse(tool, payload, context, RefusalReason.APPROVAL_REQUIRED)
 
-        return await self._execute(spec, payload, context)
+        return spec, payload
 
     async def is_provider_reachable(self) -> bool:
         return await self._client.is_reachable()
@@ -220,6 +272,8 @@ class ToolGateway:
             message = f"Invalid arguments for '{tool}': {detail}. No action was taken."
         elif reason == RefusalReason.APPROVAL_REQUIRED:
             message = f"'{tool}' needs the user's approval. No action was taken."
+        elif reason in (RefusalReason.MISSING_DETAILS, RefusalReason.REQUEST_MISMATCH):
+            message = detail or message
         return ToolResult(
             tool=tool, status=ToolStatus.REFUSED, error_code=reason.value, message=message
         )

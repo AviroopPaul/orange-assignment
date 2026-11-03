@@ -3,8 +3,8 @@
 A chat agent that arranges home-service errands. This is the Orange founding AI engineer assignment.
 
 **Status:** the server, agent, LLM, workers, UI, mock provider and tool gateway run. The agent can
-search and compare providers, read reviews and list bookings. Approvals, booking and memory are not
-built yet, so it says so if you ask it to book.
+collect details, search and compare providers within your limits, read reviews and list bookings.
+Approvals, booking and memory are not built yet, so it says so if you ask it to book.
 [BUILD_LOG.md](BUILD_LOG.md) tracks what is built and what is left against every requirement.
 
 The full design is in [docs/blueprint.html](docs/blueprint.html). Code layout and rules are in
@@ -49,6 +49,7 @@ curl -s localhost:8000/runs/RUN_ID/trace
 | `make test-integration` | Tests on real PostgreSQL and Redis, including killed workers and Redis wipes |
 | `make check` | Lint, format, types, import rules and all unit tests |
 | `make web-dev` | UI with hot reload on port 5173, against the running API |
+| `make transcript` | Append new Claude Code conversation to `docs/transcript.md` |
 | `make logs` / `make ps` | Follow logs / show service state |
 | `make down` | Stop and keep data |
 | `make reset` | Delete all data and start again |

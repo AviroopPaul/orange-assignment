@@ -43,7 +43,7 @@ async def main() -> None:
             },
         )
         turn = first.json()
-        check("live model replied", turn["outcome"] == "done", turn)
+        check("live model replied", turn["outcome"] in ("done", "needs_input"), turn)
 
         second = await client.post(
             "/chat",
@@ -75,8 +75,25 @@ async def main() -> None:
                 "/chat",
                 json={
                     "user_id": "smoke",
-                    "message": "Find a plumber in Indiranagar for any day in the next 3 days, "
-                    "any time, budget 5000. Search now and name one provider.",
+                    "session_id": (search_session := uuid.uuid4().hex),
+                    "message": "Find a plumber in Indiranagar this week, any time, budget 5000.",
+                },
+            )
+        ).json()
+        trace = (await client.get(f"/runs/{search['run_id']}/trace")).json()
+        kinds = [event["kind"] for event in trace["events"]]
+        check(
+            "dates wait for the user to confirm", "dates_proposed" in kinds, search["reply"][:120]
+        )
+        check("the reply shows the exact dates", "/20" in search["reply"], search["reply"][:120])
+
+        search = (
+            await client.post(
+                "/chat",
+                json={
+                    "user_id": "smoke",
+                    "session_id": search_session,
+                    "message": "Yes. Search now and name one provider.",
                 },
             )
         ).json()
