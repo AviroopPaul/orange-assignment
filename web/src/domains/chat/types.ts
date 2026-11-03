@@ -13,6 +13,7 @@ export interface ApprovalCard {
   service: string;
   slot: string;
   slot_label: string;
+  old_slot_label?: string | null;
   price: number;
   currency: string;
   notes: string[];

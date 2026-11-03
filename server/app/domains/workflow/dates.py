@@ -59,6 +59,12 @@ _NUMERIC = re.compile(r"^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?$")
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _DAY_MONTH = re.compile(rf"^(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH})(?:\s+(\d{{4}}))?$")
 _MONTH_DAY = re.compile(rf"^({_MONTH})\s+(\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+(\d{{4}}))?$")
+_ORDINAL = re.compile(r"^(\d{1,2})(?:st|nd|rd|th)$")
+_WEEKDAY = "|".join(sorted(_WEEKDAYS, key=len, reverse=True))
+_DAY_IN_WEEK = re.compile(
+    rf"^(?:(?P<day>{_WEEKDAY})(?:\s+of)?\s+(?P<week>this|next)\s+week"
+    rf"|(?P<week2>this|next)\s+week(?:\s+on)?\s+(?P<day2>{_WEEKDAY}))$"
+)
 
 
 @dataclass(frozen=True)
@@ -120,6 +126,21 @@ def _explicit_date(text: str, today: date) -> date | None:
     return None
 
 
+def _day_of_month(day: int, today: date) -> date | None:
+    """Just "the 11th" means the next 11th to come round."""
+    month, year = today.month, today.year
+    if day < today.day:
+        month, year = (1, year + 1) if month == 12 else (month + 1, year)
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _full_name(weekday: int) -> str:
+    return next(name.capitalize() for name, number in _WEEKDAYS.items() if number == weekday)
+
+
 def _one_phrase(text: str, today: date) -> ResolvedDates | None:
     text = _LEADING.sub("", text).strip()
     this_sunday = today + timedelta(days=6 - today.weekday())
@@ -145,12 +166,19 @@ def _one_phrase(text: str, today: date) -> ResolvedDates | None:
         saturday = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
         return _span("Next weekend", saturday, saturday + timedelta(days=1))
 
+    if match := _DAY_IN_WEEK.match(text):
+        weekday = _WEEKDAYS[match["day"] or match["day2"]]
+        week = match["week"] or match["week2"]
+        monday = next_monday if week == "next" else today - timedelta(days=today.weekday())
+        return _single(f"{_full_name(weekday)} {week} week", monday + timedelta(days=weekday))
+    if match := _ORDINAL.match(text):
+        ordinal = _day_of_month(int(match[1]), today)
+        return _single(ordinal.strftime("%A"), ordinal) if ordinal else None
+
     words = text.split()
     if words and words[-1] in _WEEKDAYS and len(words) <= 2:
         weekday = _WEEKDAYS[words[-1]]
-        full_name = next(
-            name.capitalize() for name, number in _WEEKDAYS.items() if number == weekday
-        )
+        full_name = _full_name(weekday)
         if len(words) == 1 or words[0] in ("this", "coming"):
             return _single(f"This {full_name}", _next_weekday(today, weekday))
         if words[0] == "next":
@@ -185,6 +213,29 @@ def problem_with(resolved: ResolvedDates, today: date) -> str | None:
     if (resolved.end - resolved.start).days > MAX_SEARCH_DAYS:
         return f"Search at most {MAX_SEARCH_DAYS} days at a time. Ask for a shorter range."
     return None
+
+
+def time_is_stated(at: str, user_text: str) -> bool:
+    """A time the user really gave, as "10am", "at 10", "10:00" or a bare "10" after being asked.
+
+    "The same time" also counts. Nothing else does, so the model cannot pick a time for them.
+    """
+    text = user_text.casefold()
+    hour, minute = int(at[:2]), int(at[3:])
+    if "same time" in text or re.search(rf"\b0?{hour:d}[:.]{minute:02d}\b", text):
+        return True
+    if minute != 0:
+        return False
+    if (hour == 12 and "noon" in text) or (hour == 0 and "midnight" in text):
+        return True
+    twelve = hour % 12 or 12
+    side = "a" if hour < 12 else "p"
+    return bool(
+        re.search(rf"\b{twelve}\s*{side}\.?m\b", text)
+        or re.search(rf"\b(?:at|around|about|by)\s+(?:{twelve}|{hour})\b(?!\s*[ap]\.?m)", text)
+        or re.search(rf"\b(?:{twelve}|{hour})\s*o'?clock\b", text)
+        or re.search(rf"^\s*(?:{twelve}|{hour})\s*$", text, re.MULTILINE)
+    )
 
 
 def is_grounded(phrase: str, user_text: str) -> bool:

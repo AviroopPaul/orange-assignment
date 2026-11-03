@@ -11,7 +11,7 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
-from app.domains.bookings.matching import claims_side_effect
+from app.domains.bookings.matching import claimed_actions
 from app.domains.bookings.service import ApprovalService
 from app.domains.gateway.service import CallContext, ToolBudgetExhausted, ToolGateway
 from app.domains.tracing.service import ModelUsage, RunRecorder
@@ -82,10 +82,17 @@ async def _block_false_claim(
 ) -> LlmResponse | None:
     """Success text comes from a template after verification. The model may not write its own."""
     text = "".join(part.text for part in parts or [] if part.text and not part.thought)
-    if not claims_side_effect(text) or turn.read_bookings:
+    claimed = claimed_actions(text)
+    if not claimed:
         return None
-    if await turn.bookings.has_verified_booking(turn.tool_context.user_id, turn.session_id):
-        return None
+    user_id = turn.tool_context.user_id
+    # Reading the bookings proves nothing about a change still waiting for a yes or a check.
+    unfinished = await turn.bookings.unfinished_actions(user_id, turn.session_id)
+    if not claimed & unfinished:
+        if turn.read_bookings:
+            return None
+        if claimed <= await turn.bookings.verified_actions(user_id, turn.session_id):
+            return None
     await turn.recorder.event("false_claim_blocked", data={"text": text[:500]})
     return LlmResponse(
         content=types.Content(role="model", parts=[types.Part(text=FALSE_CLAIM_REPLY)]),

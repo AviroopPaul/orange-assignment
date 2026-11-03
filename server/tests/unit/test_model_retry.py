@@ -43,6 +43,13 @@ class StubModelServer:
         return web.json_response({"error": error}, status=self.status)
 
 
+@pytest.fixture(autouse=True)
+def fake_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Gemini client reads the key from the environment. CI has none, and a real one must never
+    be sent, even to this local stub."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+
+
 @pytest.fixture
 async def stub() -> AsyncIterator[StubModelServer]:
     server = StubModelServer()

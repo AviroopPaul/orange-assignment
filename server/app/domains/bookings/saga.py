@@ -1,9 +1,9 @@
-"""Carries out one approved booking, in the worker.
+"""Carries out one approved booking, cancel or reschedule, in the worker.
 
-Every result ends at the source of truth: `get_booking_status` runs after every `book`, whatever
-`book` returned, and only that answer can report success. The attempt row commits before each call,
-so a job that dies or runs twice picks up from what is known. The provider replays a repeated key,
-so a repeat cannot book twice.
+Every result ends at the source of truth: `get_booking_status` runs after every `book`, and
+`list_bookings` after every `cancel` or `reschedule`, whatever the call returned. Only that answer
+can report success. The attempt row commits before each call, so a job that dies or runs twice picks
+up from what is known. The provider replays a repeated key, so a repeat cannot act twice.
 """
 
 import asyncio
@@ -14,28 +14,31 @@ from typing import Any
 
 from app.core.clock import Clock
 from app.core.database import Database
-from app.domains.bookings.models import Approval, AttemptStatus, BookingAttempt
+from app.domains.bookings.models import Approval, AttemptStatus, BookingAction, BookingAttempt
 from app.domains.bookings.repository import BookingRepository
 from app.domains.bookings.service import (
+    ACTIVE_BOOKING,
     BOOK_JOB,
     ApprovalService,
     card_of,
     money,
     slot_label,
 )
-from app.domains.bookings.verification import token_for
+from app.domains.bookings.verification import change_token_for, token_for
 from app.domains.gateway.schemas import Caller, ToolStatus
 from app.domains.gateway.service import CallContext, ToolBudget, ToolGateway
 from app.domains.jobs.service import JobService
 from app.domains.notifications.service import NotificationService
 from app.domains.tracing.service import RunRecorder, TraceService
 from app.domains.workflow.models import WorkflowState as S
-from app.domains.workflow.service import WorkflowService, record_moves
+from app.domains.workflow.service import WorkflowService, record_moves, same_time
 
 logger = logging.getLogger(__name__)
 
 # The first call plus two retries, with the same hold and the same key.
 MAX_BOOK_CALLS = 3
+# The gateway retries a cancel or a reschedule itself, so this counts rounds of those.
+MAX_CHANGE_CALLS = 2
 SAGA_TOOL_BUDGET = 30
 BOOKED_OK = "ok"
 # The call may not have reached the provider, so a retry is fair once status says not booked.
@@ -44,6 +47,25 @@ _RETRYABLE = frozenset({None, "timeout", "provider_unavailable", "provider_error
 
 def _describe(approval: Approval) -> str:
     return f"{approval.provider_name}, {slot_label(approval.slot)}"
+
+
+def _describe_booking(approval: Approval) -> str:
+    """The booking as it was when the user agreed, before any move."""
+    return f"{approval.provider_name}, {slot_label(approval.old_slot or approval.slot)}"
+
+
+def _change_is_done(approval: Approval, booking: dict[str, Any]) -> bool:
+    if approval.action == BookingAction.CANCEL:
+        return booking["status"] == "cancelled"
+    return booking["status"] == ACTIVE_BOOKING and same_time(booking["slot"], approval.slot)
+
+
+def _shows_as(booking: dict[str, Any] | None) -> str:
+    if booking is None:
+        return "The provider no longer lists this booking."
+    if booking["status"] == ACTIVE_BOOKING:
+        return f"The provider still shows it as active, at {slot_label(booking['slot'])}."
+    return f"The provider shows it as {booking['status']}."
 
 
 class BookingSaga:
@@ -107,7 +129,10 @@ class BookingSaga:
             attempt.user_id, Caller.SAGA, ToolBudget(SAGA_TOOL_BUDGET), recorder=recorder
         )
         try:
-            await self._drive(attempt, approval, context, recorder)
+            if approval.action == BookingAction.BOOK:
+                await self._drive(attempt, approval, context, recorder)
+            else:
+                await self._drive_change(attempt, approval, context, recorder)
         except (Exception, asyncio.CancelledError):
             # The job limit or a fault. The next delivery carries on, and the user hears about it.
             await self._say_not_confirmed_safely(attempt, approval, recorder)
@@ -206,6 +231,86 @@ class BookingSaga:
             if not await self._note_result(attempt, last_result):
                 return
 
+    async def _drive_change(
+        self,
+        attempt: BookingAttempt,
+        approval: Approval,
+        context: CallContext,
+        recorder: RunRecorder,
+    ) -> None:
+        calls, last_result = attempt.book_calls, attempt.last_result
+        while True:
+            if calls > 0:
+                await self._move(attempt, recorder, S.VERIFYING)
+            listed = await self._gateway.call(
+                "list_bookings", {"user_id": attempt.user_id}, context
+            )
+            if not listed.ok:
+                await self._not_confirmed(attempt, approval, recorder)
+                return
+            booking = next(
+                (
+                    item
+                    for item in listed.data["bookings"]
+                    if item["booking_id"] == approval.booking_id
+                ),
+                None,
+            )
+            if calls > 0:
+                await recorder.event(
+                    "booking_status_checked",
+                    data={
+                        "status": booking["status"] if booking else None,
+                        "slot": booking["slot"] if booking else None,
+                        "after_call_result": last_result,
+                    },
+                )
+                if booking is not None and _change_is_done(approval, booking):
+                    await self._finish_change(attempt, approval, recorder)
+                    return
+            if booking is None or booking["status"] != ACTIVE_BOOKING:
+                await self._close_change_failed(attempt, approval, booking, "changed", recorder)
+                return
+            if calls > 0:
+                if last_result == "slot_conflict":
+                    await self._close_conflict(attempt, approval, booking, recorder)
+                    return
+                if last_result not in _RETRYABLE:
+                    await self._close_change_failed(
+                        attempt, approval, booking, str(last_result), recorder
+                    )
+                    return
+                if calls >= MAX_CHANGE_CALLS:
+                    await self._close_change_failed(
+                        attempt, approval, booking, "retries_exhausted", recorder
+                    )
+                    return
+
+            await self._move(attempt, recorder, S.EXECUTING)
+            context.approval_token = change_token_for(approval, booking)
+            if not await self._note_book_call(attempt, calls + 1):
+                return  # This worker lost its lease. The new owner carries on.
+            calls += 1
+            args = {"booking_id": approval.booking_id, "idempotency_key": attempt.idempotency_key}
+            if approval.action == BookingAction.RESCHEDULE:
+                args["slot"] = approval.slot
+            result = await self._gateway.call(approval.action, args, context)
+            context.approval_token = None
+            if result.status == ToolStatus.REFUSED:
+                # Nothing was sent. The booking is no longer what the user agreed to change.
+                await self._note_book_call(attempt, calls - 1)
+                await recorder.event(
+                    "approval_mismatch",
+                    data={"approval_id": str(approval.id), "booking": booking},
+                )
+                await self._close_change_failed(
+                    attempt, approval, booking, "approval_mismatch", recorder
+                )
+                return
+            last_result = BOOKED_OK if result.ok else result.error_code
+            if not await self._note_result(attempt, last_result):
+                return
+
     async def _after_refusal(
         self,
         attempt: BookingAttempt,
@@ -253,8 +358,15 @@ class BookingSaga:
         self, attempt: BookingAttempt, approval: Approval, recorder: RunRecorder
     ) -> None:
         """The attempt stays open and the sweep tries again. The user hears this once."""
+        what = {
+            BookingAction.BOOK: f"Your booking with {_describe(approval)}",
+            BookingAction.CANCEL: f"Cancelling {_describe(approval)}",
+            BookingAction.RESCHEDULE: (
+                f"Moving {_describe_booking(approval)} to {slot_label(approval.slot)}"
+            ),
+        }[BookingAction(approval.action)]
         text = (
-            f"Your booking with {_describe(approval)} is not confirmed yet. "
+            f"{what} is not confirmed yet. "
             "I have not been able to check with the provider yet, and I will keep trying."
         )
         async with self._db.session_scope() as session:
@@ -304,6 +416,87 @@ class BookingSaga:
             "booking_verified", data={"attempt_id": str(attempt.id), "booking_id": booking_id}
         )
         await self._traces.settle_run(recorder, "done", text)
+
+    async def _finish_change(
+        self, attempt: BookingAttempt, approval: Approval, recorder: RunRecorder
+    ) -> None:
+        if approval.action == BookingAction.CANCEL:
+            status, kind = AttemptStatus.CANCELLED, "booking_cancelled"
+            text = f"Cancelled and verified with the provider: {_describe(approval)}."
+        else:
+            status, kind = AttemptStatus.RESCHEDULED, "booking_rescheduled"
+            text = (
+                f"Moved and verified with the provider: {approval.provider_name}, now "
+                f"{slot_label(approval.slot)}. It was {slot_label(approval.old_slot or '')}."
+            )
+        text += f" Booking ID: {approval.booking_id}."
+        moves = []
+        async with self._db.session_scope() as session:
+            closed = await BookingRepository(session).close_attempt(
+                attempt.id, status, self._clock.now()
+            )
+            if not closed:
+                return
+            moves = await self._workflows.close_change_in(session, attempt.workflow_id)
+            await self._notifications.add_in(
+                session,
+                attempt.user_id,
+                attempt.session_id,
+                kind,
+                text,
+                {"booking_id": approval.booking_id, "run_id": str(attempt.run_id)},
+            )
+        await record_moves(recorder, moves)
+        await recorder.event(
+            kind, data={"attempt_id": str(attempt.id), "booking_id": approval.booking_id}
+        )
+        await self._traces.settle_run(recorder, "done", text)
+
+    async def _close_conflict(
+        self,
+        attempt: BookingAttempt,
+        approval: Approval,
+        booking: dict[str, Any],
+        recorder: RunRecorder,
+    ) -> None:
+        others = await self._workflows.other_slots(
+            attempt.workflow_id, attempt.provider_id, attempt.slot
+        )
+        listed = "; ".join(slot_label(slot) for slot in others)
+        offer = f" Other open slots with this provider: {listed}." if listed else ""
+        await self._close_to_comparing(
+            attempt,
+            AttemptStatus.SLOT_CONFLICT,
+            "reschedule_conflict",
+            f"{slot_label(approval.slot)} is not available with {approval.provider_name}, so your "
+            f"booking did not move. It stays at {slot_label(booking['slot'])}.{offer} "
+            "Tell me another time and I will ask you to confirm it.",
+            recorder,
+        )
+
+    async def _close_change_failed(
+        self,
+        attempt: BookingAttempt,
+        approval: Approval,
+        booking: dict[str, Any] | None,
+        reason: str,
+        recorder: RunRecorder,
+    ) -> None:
+        verb = "cancel" if approval.action == BookingAction.CANCEL else "move"
+        if reason == "invalid_slot":
+            why = f"{approval.provider_name} does not work at {slot_label(approval.slot)}."
+        elif reason in ("changed", "approval_mismatch"):
+            why = "It is no longer what you agreed to change, so I did nothing."
+        else:
+            why = "The provider did not complete it."
+        await self._close_to_comparing(
+            attempt,
+            AttemptStatus.FAILED,
+            "change_failed",
+            f"I could not {verb} {_describe_booking(approval)}. {why} {_shows_as(booking)}",
+            recorder,
+            reason,
+        )
 
     async def _close_slot_taken(
         self, attempt: BookingAttempt, approval: Approval, recorder: RunRecorder

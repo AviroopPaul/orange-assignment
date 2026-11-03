@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import httpx
 import pytest
@@ -29,6 +29,8 @@ from app.domains.gateway.schemas import Caller
 from app.domains.gateway.service import CallContext, ToolBudget
 from app.domains.jobs.broker import build_broker
 from app.domains.jobs.models import OutboxJob
+from mock_provider import catalog
+from mock_provider.catalog import CATALOG
 from mock_provider.migrate import main as migrate_mock
 from tests.conftest import make_ready
 
@@ -290,3 +292,119 @@ async def test_price_change_after_approval_on_real_services(
     assert view.card is not None
     assert view.card.price == card.price + 900
     assert start.card.status == ApprovalStatus.PENDING.value
+
+
+async def _booked_for_change(rig: Rig, workers: list[subprocess.Popen], server_url: str) -> dict:
+    await rig.scenario(book_outcomes=["success"])
+    card = await rig.card()
+    start_worker(workers, server_url)
+    await rig.core.approvals.confirm_click(card.approval_id, rig.user)
+    await rig.wait_for_attempt(lambda row: row.status != AttemptStatus.OPEN.value)
+    return (await rig.provider_bookings())[0]
+
+
+async def _propose_cancel(rig: Rig, booking_id: str, chat: str) -> ApprovalCard:
+    await rig.core.workflows.record_user_message(rig.user, chat, "cancel my booking")
+    context = CallContext(rig.user, Caller.MODEL, ToolBudget(12))
+    result = await rig.core.approvals.propose_cancel(chat, booking_id, context)
+    assert result.get("card_shown_to_user"), result
+    view = await rig.core.approvals.view(rig.user, chat)
+    assert view.card is not None
+    return view.card
+
+
+async def _wait_for_change(rig: Rig, action: str, limit_s: float = 25) -> BookingAttempt:
+    async with asyncio.timeout(limit_s):
+        while True:
+            for row in await rig.attempts():
+                if row.action == action and row.status != AttemptStatus.OPEN.value:
+                    return row
+            await asyncio.sleep(0.1)
+
+
+async def test_a_real_worker_cancels_through_the_503_and_verifies(
+    rig: Rig, workers: list[subprocess.Popen], server_url: str
+) -> None:
+    booking = await _booked_for_change(rig, workers, server_url)
+    chat = uuid.uuid4().hex
+    card = await _propose_cancel(rig, booking["booking_id"], chat)
+
+    await rig.core.approvals.confirm_click(card.approval_id, rig.user)
+
+    attempt = await _wait_for_change(rig, "cancel")
+    assert attempt.status == AttemptStatus.CANCELLED.value
+    assert (await rig.provider_bookings())[0]["status"] == "cancelled"
+    notes = await rig.core.notifications.list_after(rig.user, chat)
+    assert [note.kind for note in notes] == ["booking_cancelled"]
+
+
+async def test_ten_concurrent_cancel_confirmations_start_one_attempt(
+    rig: Rig, workers: list[subprocess.Popen], server_url: str
+) -> None:
+    booking = await _booked_for_change(rig, workers, server_url)
+    chat = uuid.uuid4().hex
+    card = await _propose_cancel(rig, booking["booking_id"], chat)
+
+    answers = await asyncio.gather(
+        *[rig.core.approvals.confirm_click(card.approval_id, rig.user) for _ in range(10)]
+    )
+
+    statuses = [answer.status for answer in answers]
+    assert statuses.count(DecisionStatus.IN_PROGRESS) == 1
+    assert statuses.count(DecisionStatus.ALREADY_CONFIRMED) == 9
+    assert len([row for row in await rig.attempts() if row.action == "cancel"]) == 1
+    await _wait_for_change(rig, "cancel")
+
+
+async def test_two_chats_cannot_change_one_booking_at_once(
+    rig: Rig, workers: list[subprocess.Popen], server_url: str
+) -> None:
+    """Checks the partial unique index on PostgreSQL, with both confirmations at the same time."""
+    booking = await _booked_for_change(rig, workers, server_url)
+    first = await _propose_cancel(rig, booking["booking_id"], uuid.uuid4().hex)
+    second = await _propose_cancel(rig, booking["booking_id"], uuid.uuid4().hex)
+
+    answers = await asyncio.gather(
+        rig.core.approvals.confirm_click(first.approval_id, rig.user),
+        rig.core.approvals.confirm_click(second.approval_id, rig.user),
+    )
+
+    statuses = sorted(answer.status for answer in answers)
+    assert statuses == sorted([DecisionStatus.IN_PROGRESS, DecisionStatus.NO_LONGER_VALID])
+    assert len([row for row in await rig.attempts() if row.action == "cancel"]) == 1
+    await _wait_for_change(rig, "cancel")
+
+
+async def test_a_real_worker_keeps_the_old_booking_on_slot_conflict(
+    rig: Rig, workers: list[subprocess.Popen], server_url: str
+) -> None:
+    booking = await _booked_for_change(rig, workers, server_url)
+    chat = uuid.uuid4().hex
+    # A slot this provider really works, or the provider refuses it before any conflict.
+    start = SystemClock().now().astimezone(LOCAL_TZ).date() + timedelta(days=20)
+    open_slots = [
+        slot
+        for offset in range(7)
+        for slot in catalog.slots_on(CATALOG[booking["provider_id"]], start + timedelta(offset))
+    ]
+    chosen = datetime.fromisoformat(open_slots[0])
+    phrase = f"{chosen.day} {chosen:%b}"
+    await rig.core.workflows.record_user_message(
+        rig.user, chat, f"move it to {phrase} at {chosen:%H:%M}"
+    )
+    context = CallContext(rig.user, Caller.MODEL, ToolBudget(12))
+    result = await rig.core.approvals.propose_reschedule(
+        chat, booking["booking_id"], phrase, f"{chosen:%H:%M}", context
+    )
+    assert result.get("card_shown_to_user"), result
+    view = await rig.core.approvals.view(rig.user, chat)
+    assert view.card is not None
+    await rig.scenario(slot_conflicts=[view.card.slot])
+
+    await rig.core.approvals.confirm_click(view.card.approval_id, rig.user)
+
+    attempt = await _wait_for_change(rig, "reschedule")
+    assert attempt.status == AttemptStatus.SLOT_CONFLICT.value
+    now = (await rig.provider_bookings())[0]
+    assert now["slot"] == booking["slot"]
+    assert now["status"] == "confirmed"

@@ -436,7 +436,7 @@ async def test_search_cannot_interrupt_a_booking_in_flight(
     guard = WorkflowSearchGuard(workflow, USER, SESSION)
     blocked = await guard.check("search_providers", {})
     assert blocked is not None
-    assert "booking is in progress" in blocked[1]
+    assert "booking request is in progress" in blocked[1]
 
 
 @pytest.mark.parametrize("state", [S.EXECUTING, S.VERIFYING])

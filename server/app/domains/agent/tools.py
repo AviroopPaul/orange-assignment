@@ -148,6 +148,63 @@ async def propose_booking(provider_id: str, slot: str) -> dict:
     )
 
 
+async def propose_cancel(booking_id: str) -> dict:
+    """Show the user a card to cancel one of their upcoming bookings.
+
+    This cancels nothing. Only the user's own click or reply can approve it. Use list_bookings first
+    if you do not have the booking's ID.
+
+    Args:
+        booking_id: The booking's ID from list_bookings.
+    """
+    turn = _turn()
+
+    async def propose(payload: dict[str, Any]) -> dict[str, Any]:
+        return await turn.bookings.propose_cancel(
+            turn.session_id, payload["booking_id"], turn.tool_context
+        )
+
+    return _for_model(
+        await turn.gateway.call_local(
+            "propose_cancel", {"booking_id": booking_id}, turn.tool_context, propose
+        )
+    )
+
+
+async def propose_reschedule(booking_id: str, day: str, time: str) -> dict:
+    """Show the user a card to move one of their upcoming bookings to a new time.
+
+    This moves nothing. Only the user's own click or reply can approve it. Use list_bookings first
+    if you do not have the booking's ID.
+
+    Args:
+        booking_id: The booking's ID from list_bookings.
+        day: The user's exact words for one day, such as "Saturday", "14 Nov", "11th" or
+            "Wednesday next week". Join their words if they gave it over several messages.
+            Never work out a date yourself.
+        time: The time the user said, as 24-hour HH:MM. Never pick one for them.
+    """
+    turn = _turn()
+
+    async def propose(payload: dict[str, Any]) -> dict[str, Any]:
+        return await turn.bookings.propose_reschedule(
+            turn.session_id,
+            payload["booking_id"],
+            payload["day"],
+            payload["time"],
+            turn.tool_context,
+        )
+
+    return _for_model(
+        await turn.gateway.call_local(
+            "propose_reschedule",
+            {"booking_id": booking_id, "day": day, "time": time},
+            turn.tool_context,
+            propose,
+        )
+    )
+
+
 async def get_provider(provider_id: str) -> dict:
     """Get one provider's details and customer reviews.
 
@@ -191,6 +248,8 @@ MODEL_TOOLS: list[Callable[..., Any]] = [
     resolve_dates,
     search_providers,
     propose_booking,
+    propose_cancel,
+    propose_reschedule,
     get_provider,
     list_bookings,
     get_booking_status,
