@@ -65,7 +65,7 @@ async def test_chat_then_read_its_trace(client: httpx.AsyncClient) -> None:
     response = await client.post("/chat", json={"user_id": "u1", "message": "I need a plumber"})
     assert response.status_code == 200
     body = response.json()
-    assert body["outcome"] == "done"
+    assert body["outcome"] == "needs_input"
     assert body["reply"] == "Which area are you in?"
 
     trace = (await client.get(f"/runs/{body['run_id']}/trace")).json()

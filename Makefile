@@ -1,7 +1,7 @@
 # `docker compose` when the plugin works, otherwise the standalone binary.
 COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: up down logs reset ps test test-web test-integration check smoke web-dev
+.PHONY: up down logs reset ps test test-web test-integration check smoke web-dev transcript
 
 up:
 	$(COMPOSE) up --build -d --wait
@@ -41,3 +41,7 @@ check:
 
 smoke:
 	cd server && uv run python scripts/smoke.py
+
+# Append new Claude Code conversation entries to docs/transcript.md.
+transcript:
+	python3 scripts/append_transcript.py

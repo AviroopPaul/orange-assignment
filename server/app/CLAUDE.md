@@ -17,6 +17,7 @@ app/
     agent/        ADK adapter, Gemini config, scripted model, prompt, callbacks, model tools
     gateway/      the only path to any tool: rights, schema, budget, retries, sanitize, trace
     jobs/         outbox, publish, sweep, lease, taskiq broker and tasks
+    workflow/     state machine, the errand's details, hard limits on search results
     tracing/      runs, trace events, cost
     system/       health, status, ping job
 ```
@@ -51,8 +52,12 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
 - **Every exit from a chat turn maps to one `Outcome`.** New failures need a `FailureReason` and a reply
   in `FAILURE_REPLIES`.
 - **Every tool call goes through `ToolGateway.call`.** Only `gateway/client.py` talks to the provider. `book`, `cancel` and `reschedule` need `Caller.SAGA` and a valid approval. The model never gets them as tools.
+- **The model never chooses search inputs.** It saves details with `update_request`, and code checks them against the user's words. `search_providers` takes no inputs.
+- **The model never works out a date.** `resolve_dates` reads the user's words, and `record_user_message` reads their yes or no before the model runs. Dates count only once confirmed.
+- **Only code moves workflow state**, through `WorkflowService`. Add a move to `TRANSITIONS` before using it.
 - **A refusal is a result, not an exception.** Only a spent budget raises, because it must end the run.
 - **Reviews are data.** Safety comes from what the model can do, not from filtering text. Flags inform the trace; they do not block.
+- **A 429 is not an outage.** `RateLimitAwareGemini` waits if Gemini asks for 30 s or less, inside one model call. Longer waits become `ModelRateLimited`, and the user gets a busy reply.
 - **Gemini rejects a request deadline under 10 s.** Config validation stops this at startup.
 
 ## Not built yet

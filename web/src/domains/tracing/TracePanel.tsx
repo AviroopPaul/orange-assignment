@@ -46,6 +46,32 @@ function EventDetails({ event }: { event: TraceEvent }) {
   const attempts = Number(event.data.attempts ?? 0);
   return (
     <dl className="event-details">
+      {event.data.from != null && event.data.to != null && (
+        <div>
+          <dt>Moved</dt>
+          <dd>
+            {String(event.data.from)} to {String(event.data.to)}
+          </dd>
+        </div>
+      )}
+      {event.data.dates != null && (
+        <div>
+          <dt>Dates</dt>
+          <dd>{String(event.data.dates)}</dd>
+        </div>
+      )}
+      {event.data.wait_s != null && (
+        <div>
+          <dt>Waited</dt>
+          <dd>{String(event.data.wait_s)} s</dd>
+        </div>
+      )}
+      {event.data.retry_after_s != null && (
+        <div>
+          <dt>Try again in</dt>
+          <dd>{String(event.data.retry_after_s)} s</dd>
+        </div>
+      )}
       {event.data.status != null && (
         <div>
           <dt>Status</dt>

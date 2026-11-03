@@ -20,6 +20,7 @@ class Outcome(StrEnum):
 class FailureReason(StrEnum):
     MODEL_NOT_CONFIGURED = "model_not_configured"
     MODEL_UNAVAILABLE = "model_unavailable"
+    MODEL_RATE_LIMITED = "model_rate_limited"
     MODEL_CALL_LIMIT = "model_call_limit"
     TOOL_CALL_LIMIT = "tool_call_limit"
     RUN_DEADLINE = "run_deadline"
@@ -43,4 +44,5 @@ class ChatResponse(BaseModel):
     session_id: str
     outcome: Outcome
     reason: FailureReason | None = None
+    retry_after_s: int | None = None
     reply: str

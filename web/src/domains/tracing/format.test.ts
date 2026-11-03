@@ -21,6 +21,6 @@ describe("trace formatting", () => {
 
   it("falls back to the raw kind for events it does not know", () => {
     expect(kindLabel("model_call")).toBe("Model call");
-    expect(kindLabel("state_transition")).toBe("state_transition");
+    expect(kindLabel("brand_new_kind")).toBe("brand_new_kind");
   });
 });

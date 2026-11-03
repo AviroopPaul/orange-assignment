@@ -17,6 +17,8 @@ from app.domains.gateway.client import ProviderClient
 from app.domains.gateway.service import DenyAllApprovals, ToolGateway
 from app.domains.jobs import models as job_models  # noqa: F401
 from app.domains.tracing import models as tracing_models  # noqa: F401
+from app.domains.workflow import models as workflow_models  # noqa: F401
+from app.domains.workflow.service import WorkflowService
 from mock_provider.config import MockSettings
 from mock_provider.main import create_app as create_mock_app
 from mock_provider.models import MockBase
@@ -81,6 +83,11 @@ async def db() -> AsyncIterator[Database]:
 
 
 @pytest.fixture
+def workflow(db: Database, clock: FakeClock) -> WorkflowService:
+    return WorkflowService(db, clock)
+
+
+@pytest.fixture
 async def redis() -> AsyncIterator[Redis]:
     client = fakeredis.FakeAsyncRedis()
     yield client
@@ -116,3 +123,21 @@ async def gateway(provider_transport: httpx.AsyncBaseTransport) -> AsyncIterator
 
     yield ToolGateway(client, DenyAllApprovals(), retry_backoff_s=0, sleep=no_wait)
     await client.close()
+
+
+async def make_ready(
+    workflow: WorkflowService,
+    user: str,
+    session: str,
+    phrase: str = "3 Nov to 5 Nov",
+    service: str = "plumber",
+    area: str = "Indiranagar",
+    **extra: object,
+) -> None:
+    """A request with every detail saved and its dates confirmed, the way a real user gets there."""
+    said = " ".join(str(value) for value in extra.values())
+    await workflow.record_user_message(user, session, f"{service} in {area} {phrase} {said}")
+    await workflow.update_request(user, session, {"service": service, "area": area, **extra})
+    await workflow.resolve_dates(user, session, phrase)
+    await workflow.note_date_question(user, session, asked_alone=True)
+    await workflow.record_user_message(user, session, "yes")

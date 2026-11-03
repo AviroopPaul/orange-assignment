@@ -19,6 +19,7 @@ from app.domains.jobs.broker import TaskiqJobPublisher
 from app.domains.jobs.service import JobHandler, JobPublisher, JobService
 from app.domains.system.service import PING_JOB, SystemService, handle_ping
 from app.domains.tracing.service import TraceService
+from app.domains.workflow.service import WorkflowService
 
 JOB_HANDLERS: dict[str, JobHandler] = {PING_JOB: handle_ping}
 
@@ -112,10 +113,12 @@ def build_api_container(
 
     settings = core.settings
     traces = TraceService(core.db, core.clock)
+    workflows = WorkflowService(core.db, core.clock)
     runtime = AdkAgentRuntime(
         model=model or build_model(settings),
         session_service=session_service or DatabaseSessionService(db_url=settings.adk_database_url),
         gateway=core.gateway,
+        workflow=workflows,
         max_model_calls=settings.max_model_calls,
         max_tool_calls=settings.max_tool_calls,
         today=lambda: core.clock.now().astimezone(LOCAL_TZ).date(),
@@ -127,6 +130,7 @@ def build_api_container(
             core.redis, ttl_s=settings.turn_lock_ttl_s, wait_s=settings.turn_lock_wait_s
         ),
         traces=traces,
+        workflows=workflows,
         run_deadline_s=settings.run_deadline_s,
         model_is_configured=settings.model_is_configured,
     )

@@ -32,12 +32,13 @@ source_modules =
     app.domains.jobs
     app.domains.system
     app.domains.tracing
+    app.domains.workflow
 forbidden_modules =
     google
     app.domains.agent
 
 [importlinter:contract:gateway-is-below-chat]
-name = the gateway does not know about chat or the agent
+name = the gateway does not know about chat, the agent or the workflow
 type = forbidden
 source_modules = app.domains.gateway
 forbidden_modules =
@@ -45,6 +46,7 @@ forbidden_modules =
     app.domains.chat
     app.domains.system
     app.domains.jobs
+    app.domains.workflow
 
 [importlinter:contract:jobs-are-generic]
 name = the jobs domain knows no other domain

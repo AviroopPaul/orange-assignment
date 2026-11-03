@@ -19,6 +19,9 @@ const OUTCOME_LABELS: Record<Outcome, string> = {
   tool_failed: "Failed",
 };
 
+// Normal ends of a turn. Asking the user a question is not worth flagging.
+const QUIET_OUTCOMES = new Set<Outcome>(["done", "needs_input"]);
+
 interface ChatPanelProps {
   messages: ChatMessage[];
   sending: boolean;
@@ -117,7 +120,7 @@ export function ChatPanel({
                 aria-pressed={message.runId === selectedRunId}
                 onClick={() => onSelectRun(message.runId as string)}
               >
-                {message.outcome && message.outcome !== "done" && (
+                {message.outcome && !QUIET_OUTCOMES.has(message.outcome) && (
                   <span className={`chip outcome-${message.outcome}`}>
                     {OUTCOME_LABELS[message.outcome]}
                   </span>

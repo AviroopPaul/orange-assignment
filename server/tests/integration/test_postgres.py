@@ -10,6 +10,7 @@ from alembic.config import Config
 from alembic.util.exc import CommandError
 from google.adk.sessions import DatabaseSessionService
 from redis.asyncio import Redis
+from sqlalchemy import func, select
 
 from app.container import build_api_container, build_core
 from app.core.clock import SystemClock
@@ -18,6 +19,8 @@ from app.core.database import Database
 from app.domains.agent.scripted import ScriptedLlm
 from app.domains.chat.schemas import ChatRequest, Outcome
 from app.domains.jobs.repository import OutboxRepository
+from app.domains.workflow.models import Workflow
+from app.domains.workflow.service import WorkflowService
 from tests.conftest import RecordingPublisher
 
 pytestmark = pytest.mark.integration
@@ -75,7 +78,7 @@ async def test_chat_on_real_services_keeps_history_and_serialises_turns() -> Non
         ]
     )
 
-    assert [response.outcome for response in responses] == [Outcome.DONE] * 3
+    assert [response.outcome for response in responses] == [Outcome.NEEDS_INPUT] * 3
     last_seen = str(model.requests[-1].contents)
     assert all(f"message {n}" in last_seen for n in range(3))
 
@@ -86,7 +89,48 @@ async def test_chat_on_real_services_keeps_history_and_serialises_turns() -> Non
     assert stored is not None and len(stored.events) == 6
 
     trace = await container.traces.get_trace(responses[0].run_id)
-    assert trace.outcome == "done"
+    assert trace.outcome == "needs_input"
     await sessions.db_engine.dispose()
     await restarted.db_engine.dispose()
     await core.close()
+
+
+async def test_concurrent_updates_on_one_workflow_keep_every_field() -> None:
+    """Version checks: neither writer may overwrite the other's detail."""
+    settings = get_settings()
+    db = Database(settings.errand_database_url, pool_size=10)
+    workflows = WorkflowService(db, SystemClock())
+    session_id = uuid.uuid4().hex
+    await workflows.record_user_message("it", session_id, "plumber in Indiranagar")
+
+    await asyncio.gather(
+        workflows.update_request("it", session_id, {"service": "plumber"}),
+        workflows.update_request("it", session_id, {"area": "Indiranagar"}),
+        workflows.update_request("it", session_id, {"earliest_time": "10:00"}),
+    )
+
+    snapshot = await workflows.snapshot("it", session_id)
+    assert snapshot.details == {
+        "service": "plumber",
+        "area": "Indiranagar",
+        "earliest_time": "10:00",
+    }
+    await db.dispose()
+
+
+async def test_only_one_active_workflow_per_session_under_a_race() -> None:
+    settings = get_settings()
+    db = Database(settings.errand_database_url, pool_size=10)
+    workflows = WorkflowService(db, SystemClock())
+    session_id = uuid.uuid4().hex
+
+    await asyncio.gather(
+        *[workflows.record_user_message("it", session_id, f"message {n}") for n in range(5)]
+    )
+
+    async with db.session_scope() as session:
+        count = await session.scalar(
+            select(func.count()).select_from(Workflow).where(Workflow.session_id == session_id)
+        )
+    assert count == 1
+    await db.dispose()
