@@ -114,6 +114,13 @@ Candidates for the "three real bugs" deliverable. Each one really happened, and 
 - **Why tests missed it:** Scripted models say what they are told, so a test cannot show a real model trusting its history over the status line.
 - **Regression test:** `test_the_systems_news_sits_in_the_chat_in_time_order` in `server/tests/unit/test_proactive.py`. That the model now answers correctly was checked live, once.
 
+## 16. A new state move broke a safety rule, and the docs still claimed it
+
+- **What broke:** The proactive work made `INTAKE` to `DONE` legal, so a blank errand can give way. Two state machine tests failed, and the N6 row in the build log still said no other path reaches `DONE`. Only GitHub CI caught it, because that change ran only the test files it touched.
+- **Why:** The rule was written as "only VERIFYING reaches DONE". What it must protect is narrower: nothing that executed can reach `DONE` without a status check.
+- **Fix:** The move stays, because the unique index on active errands needs it. `reopen_in` allows it only for a blank errand. The test now walks every path out of `EXECUTING`, and the N6 row says what is true.
+- **Regression test:** `test_nothing_that_executed_reaches_done_without_verifying` in `server/tests/unit/test_workflow.py`.
+
 ## Smaller
 
 **The event stream said "no news" as soon as it opened.** Redis answers a subscribe with a message, and the client reports that as nothing. So the first wait ended at once. Users would have seen no difference, because it only sent a keepalive early, but the listener's answer was wrong. Regression test: `test_a_wake_up_delivers_at_once_over_real_redis` in `server/tests/integration/test_proactive.py`.
