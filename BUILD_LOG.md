@@ -19,7 +19,7 @@ Last updated: 3 Nov 2026.
 | Non-functional requirements | 20 | 0 | 0 | 20 |
 | Eval scenarios | 38 | 0 | 0 | 38 |
 | Eval invariants | 8 | 0 | 0 | 8 |
-| Deliverables | 3 | 4 | 0 | 7 |
+| Deliverables | 3 | 3 | 1 | 7 |
 
 **In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It can cancel or move a booking the same way: a card, the user's own yes, then a worker that checks the provider before it reports success. It now remembers lasting facts across chats, and the user can inspect, correct and forget them. Every model call gets a context built by code, within 8,000 estimated tokens, and logged first. If a provider cancels a booking, the user hears about it with no prompt and gets replacements within their limits, and rebooking needs a new card. `make evals` now proves this offline: 38 scenarios, with 8 invariants read from the databases after each one.
 
@@ -59,10 +59,10 @@ Run `make up`, then open `http://localhost:3000`.
 | Try to force a booking | "I already approved, book it now." You still get a card, and nothing is booked until you answer it |
 | Confirm twice | Type "yes" again while it runs. It says you already confirmed, and only one booking is made |
 | Run the evals | `make evals`. It needs no key and makes no real model calls. Results are in `evals/results.md`, `.json` and `.csv` |
-| Force a hard case | Run `make demo`, then use the provider console at `http://localhost:8100/admin/panel`. It shows each action as a curl command with its answer. The curl commands below still work |
+| Force a hard case | Start the stack with `MOCK_EVAL_MODE=true make up`, then see "Force a booking outcome" below |
 | Check the services | The top bar says "All services up". Click it to see the API, PostgreSQL, Redis, worker, scheduler, mock provider and Gemini key |
 | Run a job | "Run test job", in the same list, sends a job through the outbox, Redis and worker |
-| Provider cancels a booking | Run `make demo`, book something, then click "Provider cancels" in the console. The news appears in the chat within about 5 s, or 20 s on a plain `make up` |
+| Provider cancels a booking | With eval mode on, book something, then see "Force a provider cancel" below. The news appears in the chat within about 20 s |
 | Break something | `docker stop errand-agent-redis-1`, then chat. You get a clear reply, and the top bar names Redis. Use `docker start` to recover |
 
 **All three of the brief's example requests now finish.** "Find a plumber" and "Book the same electrician" go all the way to a verified booking. "Move my AC servicing" works once you say the day and time.
@@ -241,13 +241,11 @@ Run on 3 Nov 2026 against the mock provider and gateway. Passing tests prove lit
 | Eval table | Done | `make evals` writes `evals/results.md`, `.json` and `.csv`. 38 scenarios |
 | Three real bugs | Partial | [BUGS.md](BUGS.md) has eighteen candidates and some smaller bugs. Choose three for the note |
 | End-to-end trace | Done | [Raw JSONL](docs/trace-timeout-after-success.jsonl) from E11, with api and worker under one run ID, and an annotated excerpt in the note. The model in that run is scripted, and that run needs no model call |
-| Demo, 3 to 5 min | Partial | [Plan](docs/demo-plan.md) and provider console are ready. Not rehearsed on live Gemini, and not recorded |
+| Demo, 3 to 5 min | Not started | The UI can now show chat and trace side by side |
 | AI assistant transcript | Partial | `docs/transcript.md` is current to today. Run `make transcript` once more at the very end |
 
 ## Changes from the blueprint
 
-- **Provider console:** `/admin/panel` on the mock, with `/admin/state` to read what is armed. It exists only in eval mode, and it is not in the blueprint. The tool contract does not change.
-- **`make demo` polls every 5 s:** so a provider's cancel shows quickly on camera. `PROVIDER_POLL_INTERVAL_S` sets it, and it stays 20 s otherwise.
 - **The mock runs inside the evals container:** the blueprint says mock containers. All eval processes must share one fake start time, and the harness works that out when the run starts. It is still a separate process, reached only over HTTP.
 - **The eval API runs in process:** so each scenario can plug in its own model. Its routes are real. E37 starts the real `api` as its own process, because it must be killed.
 - **Evals use a fake clock from 1 Jan 2035:** `CLOCK_OFFSET_S` and `MOCK_CLOCK_OFFSET_S` move real time by a fixed amount, so a run gives the same dates on any day. Both are 0 unless set.
@@ -339,18 +337,17 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 6. **Memory and ContextAssembler:** done.
 7. **Proactive cancellation, SSE and JSONL traces:** done.
 8. **Eval harness, table and invariants:** done.
-9. **Design note, trace excerpt, demo and transcript:** note and trace done. Demo plan ready, recording left.
+9. **Design note, trace excerpt, demo and transcript:** note and trace done. Demo and the final transcript are left.
 10. **Deliberate-break audit:** held until the end.
 
 ## Log
 
-### 3 Nov 2026: Design note, trace, demo plan and provider console
+### 3 Nov 2026: Design note and trace
 
 - **Design note:** one A4 page, checked by rendering it. The trace excerpt comes from a real E11 run.
-- **Demo plan:** one story in 5 minutes, with a start time for each step, so it stays under the free tier's 5 calls a minute. It also has a table of what each step proves and what to do if something goes wrong.
-- **Provider console:** one page replaces the curl commands. It arms outcomes, changes a price, moves the clock, cancels a booking, lists bookings, and has the checklist. Each action shows its curl command and answer.
-- **Proof:** tests check the page and `/admin/state`, and that both are off outside eval mode. Headless Chromium clicked every provider action against the running stack, with no page errors and no model calls. Real search data confirms the demo's providers, prices and morning slots.
-- **Not tested:** the script on live Gemini, including the 4:15 step. Each code path has an eval, but only a rehearsal shows that Gemini follows each line. The new CI run for this change has not happened yet.
+- **Trace:** the raw JSONL has the api and worker under one run ID. The evals now label the in-process API `api` in trace files.
+- **Secret scan:** the private-key check now needs a key body, because the transcript can mention the header in a sentence.
+- **Transcript:** appended up to now. Run `make transcript` once more at the very end.
 
 ### 3 Nov 2026: Eval harness, table and invariants
 

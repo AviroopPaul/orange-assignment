@@ -168,14 +168,6 @@ class ScenarioConfig(_Strict):
     reset_clock: bool = False
 
 
-class ProviderState(BaseModel):
-    """Eval mode only. What is armed, so a person can see it took effect."""
-
-    scenario: dict
-    book_outcomes_used: int
-    clock_offset_s: float
-
-
 class AdvanceClock(_Strict):
     seconds: float = Field(gt=0)
 

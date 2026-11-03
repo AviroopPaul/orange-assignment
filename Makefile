@@ -1,7 +1,7 @@
 # `docker compose` when the plugin works, otherwise the standalone binary.
 COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: up down logs reset ps demo demo-reset test test-web test-integration evals check smoke web-dev transcript
+.PHONY: up down logs reset ps test test-web test-integration evals check smoke web-dev transcript
 
 up:
 	$(COMPOSE) up --build -d --wait
@@ -26,16 +26,6 @@ test:
 
 test-web:
 	cd web && npm test
-
-# The stack for the demo: provider controls on, and a provider's cancel seen within 5 s.
-demo:
-	MOCK_EVAL_MODE=true PROVIDER_POLL_INTERVAL_S=5 $(MAKE) up
-	@echo "Provider console is at http://localhost:8100/admin/panel"
-
-# Deletes all local data first, so the demo starts from the seeded bookings and no memories.
-demo-reset:
-	$(COMPOSE) down -v
-	$(MAKE) demo
 
 # Hot reload on port 5173, against the api from `make up`.
 web-dev:
