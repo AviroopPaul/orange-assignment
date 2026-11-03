@@ -131,6 +131,9 @@ class MockProviderService:
         async with self._db.session_scope() as session:
             state = await MockRepository(session).read_state(self._default_seed)
             price = self._list_price(state, provider)
+            hang_s = float(state.scenario.get("get_provider_hang_s") or 0)
+        if hang_s:
+            await asyncio.sleep(hang_s)
         return ProviderDetails(
             id=provider.id,
             name=provider.name,
@@ -376,8 +379,9 @@ class MockProviderService:
                 raise ToolError("booking_not_active", 409, "That booking is not active.")
 
             booking.cancel_calls += 1
-            first_call = booking.cancel_calls == 1
-            if not first_call:
+            failures = state.scenario.get("cancel_failures")
+            must_fail = booking.cancel_calls <= (1 if failures is None else failures)
+            if not must_fail:
                 booking.status = "cancelled"
                 await repository.release_claim(booking.provider_id, booking.slot)
                 read = self._booking_read(booking, now)
@@ -390,7 +394,7 @@ class MockProviderService:
                     )
                 )
 
-        if first_call:
+        if must_fail:
             # Raised after the commit, so the retry sees this call was counted.
             raise ToolError("transient_error", 503, "Temporary failure. Please retry.")
         return read

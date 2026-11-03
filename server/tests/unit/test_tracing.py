@@ -1,4 +1,6 @@
+import asyncio
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -6,7 +8,13 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.database import Database
 from app.domains.tracing.pricing import estimate_cost_usd
-from app.domains.tracing.service import ModelUsage, RunNotFound, TraceService
+from app.domains.tracing.service import (
+    ABANDONED_REPLY,
+    PROCESS_DIED,
+    ModelUsage,
+    RunNotFound,
+    TraceService,
+)
 from tests.conftest import FakeClock
 
 
@@ -73,6 +81,40 @@ async def test_two_writers_on_one_run_keep_every_event(db: Database, clock: Fake
     trace = await traces.get_trace(first.run_id)
     assert sorted(event.kind for event in trace.events) == ["four", "one", "three", "two"]
     assert len({event.seq for event in trace.events}) == 4
+
+
+async def test_a_cancelled_write_leaves_no_gap_in_the_trace(traces: TraceService) -> None:
+    """Found by I6 in E28: ADK cancels parallel tool calls when one spends the budget."""
+    recorder = await traces.start_run("u1", "s1")
+    cancelled = asyncio.create_task(recorder.event("first"))
+    await asyncio.sleep(0)
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled
+    await recorder.event("second")
+    await asyncio.sleep(0.05)
+
+    trace = await traces.get_trace(recorder.run_id)
+    assert sorted(event.seq for event in trace.events) == [1, 2]
+
+
+async def test_a_run_left_open_by_a_dead_process_gets_an_outcome(
+    traces: TraceService, clock: FakeClock
+) -> None:
+    """Found by I6 in E37: a killed api left its run open for good."""
+    dead = await traces.start_run("u1", "s1")
+    clock.advance(200)
+    live = await traces.start_run("u1", "s2")
+
+    assert await traces.close_abandoned(timedelta(seconds=150)) == 1
+
+    closed = await traces.get_trace(dead.run_id)
+    assert closed.outcome == "tool_failed"
+    assert closed.reason == PROCESS_DIED
+    assert closed.reply == ABANDONED_REPLY
+    assert closed.events[-1].data == {"settled_by": "sweep"}
+    assert (await traces.get_trace(live.run_id)).outcome is None
+    assert await traces.close_abandoned(timedelta(seconds=150)) == 0
 
 
 async def test_settling_a_run_keeps_its_model_counts(db: Database, clock: FakeClock) -> None:

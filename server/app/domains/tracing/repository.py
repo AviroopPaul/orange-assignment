@@ -40,6 +40,12 @@ class TraceRepository:
         result = await self._session.scalars(select(Run).where(Run.user_id == user_id))
         return result.all()
 
+    async def open_run_ids(self, started_before: datetime) -> Sequence[uuid.UUID]:
+        result = await self._session.scalars(
+            select(Run.id).where(Run.finished_at.is_(None), Run.started_at < started_before)
+        )
+        return result.all()
+
     async def list_events(self, run_id: uuid.UUID) -> Sequence[TraceEvent]:
         result = await self._session.scalars(
             select(TraceEvent).where(TraceEvent.run_id == run_id).order_by(TraceEvent.seq)

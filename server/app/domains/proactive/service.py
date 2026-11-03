@@ -34,6 +34,7 @@ from app.domains.proactive.policy import (
 from app.domains.proactive.repository import ProactiveRepository
 from app.domains.tracing.service import RunRecorder, TraceService
 from app.domains.workflow.filters import apply_hard_limits, build_shortlist
+from app.domains.workflow.request import CHOSEN_PROVIDER
 from app.domains.workflow.service import WorkflowService, record_moves
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,8 @@ class ProactiveService:
             for provider in found.data.get("providers", [])
             if provider.get("id") != row.provider_id
         ]
+        # Keeping to a past provider makes no sense once that provider has cancelled.
+        request = {key: value for key, value in request.items() if key != CHOSEN_PROVIDER}
         options = best_options(apply_hard_limits(providers, request)["providers"])
         await self._close(
             row,

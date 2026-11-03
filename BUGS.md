@@ -121,7 +121,25 @@ Candidates for the "three real bugs" deliverable. Each one really happened, and 
 - **Fix:** The move stays, because the unique index on active errands needs it. `reopen_in` allows it only for a blank errand. The test now walks every path out of `EXECUTING`, and the N6 row says what is true.
 - **Regression test:** `test_nothing_that_executed_reaches_done_without_verifying` in `server/tests/unit/test_workflow.py`.
 
+## 17. A cancelled tool call left a gap in the trace
+
+- **What broke:** Found by invariant I6 in E28. The model made 15 tool calls at once, against a limit of 12. The trace jumped from sequence 4 to 6, and one refusal was gone.
+- **Why:** When one parallel call spends the budget, ADK cancels the others. A call cancelled in the middle of writing its trace event lost the write, but its sequence number was already used. Real Gemini can make parallel calls, so this could happen outside a test.
+- **Fix:** The write now runs under `asyncio.shield`, so it finishes even if its caller is cancelled.
+- **Why tests missed it:** Unit tests of the budget made one call per step, because `ScriptedLlm` could only make one. It can now make several at once.
+- **Regression tests:** `test_a_cancelled_write_leaves_no_gap_in_the_trace` in `server/tests/unit/test_tracing.py`, and E28 with I6.
+
+## 18. A killed API left its run open for good
+
+- **What broke:** Found by E37. The `api` process was killed in the middle of a turn. The next message worked, but the dead run never got an outcome or a reply. So the trace panel would show it as running forever, and I6 failed.
+- **Why:** Only the process running a turn could finish it. The sweep recovered jobs and booking attempts, but nothing looked at runs.
+- **Fix:** The sweep now closes any run older than the turn lock's expiry, because a live turn cannot outlast its lock. It ends as `tool_failed`, with the reason `process_died` and a clear reply.
+- **Why tests missed it:** Earlier kill tests killed only workers, whose work has a lease. No test killed the `api`, although the blueprint's N8 asked for it.
+- **Regression tests:** `test_a_run_left_open_by_a_dead_process_gets_an_outcome` in `server/tests/unit/test_tracing.py`, and E37 with I6.
+
 ## Smaller
+
+**The false-claim guard's own reply read as a claim.** I3 flagged it in E05. "I only say something is booked" matches the pattern for a claim, and the words "once it is verified" come after it, so they did not count. Nothing reached a user wrongly, but the reply was the one thing that should never look like a claim. It now says "I only report a booking or a change". Regression test: E05 with I3.
 
 **The event stream said "no news" as soon as it opened.** Redis answers a subscribe with a message, and the client reports that as nothing. So the first wait ended at once. Users would have seen no difference, because it only sent a keepalive early, but the listener's answer was wrong. Regression test: `test_a_wake_up_delivers_at_once_over_real_redis` in `server/tests/integration/test_proactive.py`.
 

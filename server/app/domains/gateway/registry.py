@@ -23,6 +23,7 @@ from app.domains.gateway.schemas import (
     ResolveDatesArgs,
     SearchProvidersArgs,
     UpdateRequestArgs,
+    UsePastProviderArgs,
 )
 
 EVERYONE = frozenset(Caller)
@@ -59,6 +60,10 @@ class ToolSpec:
 _SPECS = (
     ToolSpec("update_request", UpdateRequestArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True),
     ToolSpec("resolve_dates", ResolveDatesArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True),
+    # Reads the user's own bookings, and code decides who fits.
+    ToolSpec(
+        "use_past_provider", UsePastProviderArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True
+    ),
     # Takes a hold and shows the user a card. Nothing else follows without their approval.
     ToolSpec(
         "propose_booking", ProposeBookingArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True

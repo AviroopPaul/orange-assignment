@@ -54,7 +54,7 @@ known-first-party = ["app", "mock_provider", "tests"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["app", "mock_provider"]
+files = ["app", "mock_provider", "evals"]
 exclude = ["mock_provider/migrations/"]
 ignore_missing_imports = true
 check_untyped_defs = true

@@ -59,3 +59,36 @@ jobs:
       - name: Show service logs after a failure
         if: failure()
         run: docker compose --profile test logs --tail=100 postgres redis
+
+  evals:
+    name: Evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # Every scenario on its own stack, on a network with no route out. The exit code is the result.
+      - run: make evals
+      - name: Keep the table and the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: |
+            evals/results.*
+            evals/logs/
+
+  clean-start:
+    name: Clean start and secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # N19: from nothing, with no key. `make up` waits until every health check passes.
+      - run: make up
+      - run: curl --fail --silent --show-error http://localhost:8000/readyz
+      - run: curl --fail --silent --show-error --output /dev/null http://localhost:3000
+      # N20: the repo, the ignore files and the built image.
+      - run: python3 server/scripts/scan_secrets.py --image errand-agent-server
+      - name: Show service logs after a failure
+        if: failure()
+        run: docker compose logs --tail=100

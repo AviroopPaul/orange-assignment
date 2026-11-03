@@ -94,6 +94,7 @@ async def test_model_is_offered_no_side_effect_tool(build: Callable, traces: Tra
         "forget_memory",
         "search_providers",
         "get_open_slots",
+        "use_past_provider",
         "get_provider",
         "list_bookings",
         "get_booking_status",

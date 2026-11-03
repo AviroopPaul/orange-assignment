@@ -52,7 +52,8 @@ async def update_request(
         latest_time: Slots must start before this, as 24-hour HH:MM. "Mornings only" means 12:00.
         max_budget: The user's stated maximum price, as a whole number. Never guess this.
         preferences: Other wishes, such as a language or a technician.
-        clear_fields: Optional details to remove, such as latest_time for "any time works".
+        clear_fields: Optional details to remove, such as latest_time for "any time works", or
+            provider_id if the user no longer wants the provider from a past booking.
     """
     turn = _turn()
     args = {
@@ -142,6 +143,38 @@ async def get_open_slots(provider_id: str, day: str) -> dict:
     args = {"provider_id": provider_id, "day": day}
     return _for_model(
         await turn.gateway.call_local("get_open_slots", args, turn.tool_context, read)
+    )
+
+
+async def use_past_provider(service: str, provider_id: str | None = None) -> dict:
+    """For "the same plumber as last time": find who did it, and keep the search to them.
+
+    Code reads the user's past bookings. If several providers fit, it returns them, and you must ask
+    which one. Never work this out from list_bookings yourself.
+
+    Args:
+        service: One of plumber, electrician, ac_servicing, carpenter or house_cleaning.
+        provider_id: Only after the user chose one of the providers this tool returned.
+    """
+    turn = _turn()
+
+    async def pick(payload: dict[str, Any]) -> dict[str, Any]:
+        listed = await _call("list_bookings", {"user_id": turn.tool_context.user_id})
+        if not listed.ok:
+            return _for_model(listed)
+        turn.read_bookings = True
+        return await turn.workflow.use_past_provider(
+            turn.tool_context.user_id,
+            turn.session_id,
+            payload["service"],
+            payload.get("provider_id"),
+            listed.data.get("bookings", []),
+            turn.recorder,
+        )
+
+    args = {"service": service, "provider_id": provider_id}
+    return _for_model(
+        await turn.gateway.call_local("use_past_provider", args, turn.tool_context, pick)
     )
 
 
@@ -339,6 +372,7 @@ MODEL_TOOLS: list[Callable[..., Any]] = [
     resolve_dates,
     search_providers,
     get_open_slots,
+    use_past_provider,
     propose_booking,
     propose_cancel,
     propose_reschedule,

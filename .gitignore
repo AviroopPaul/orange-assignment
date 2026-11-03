@@ -16,3 +16,8 @@ dist/
 # Trace files from a local run. Curated excerpts go in docs/.
 artifacts/*
 !artifacts/.gitkeep
+
+# Raw output of an eval run. The generated table is kept.
+evals/logs/
+evals/traces/
+evals/results.partial.*

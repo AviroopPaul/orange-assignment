@@ -48,6 +48,7 @@ curl -s localhost:8000/runs/RUN_ID/trace
 | `make test` | Server unit tests. No Docker or network needed |
 | `make test-web` | UI tests. No Docker or network needed |
 | `make test-integration` | Tests on real PostgreSQL and Redis, including killed workers and Redis wipes |
+| `make evals` | Every eval scenario, offline, on its own throwaway PostgreSQL and Redis. Writes `evals/results.md`, `.json` and `.csv`. Needs no key |
 | `make check` | Lint, format, types, import rules and all unit tests |
 | `make web-dev` | UI with hot reload on port 5173, against the running API |
 | `make transcript` | Append new Claude Code conversation to `docs/transcript.md` |

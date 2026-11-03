@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     heartbeat_interval_s: float = 10
     heartbeat_ttl_s: int = 45
 
+    # Evals only: moves the clock, so a run gives the same dates on any day. Normally 0.
+    clock_offset_s: float = 0
+
     # Unset means no trace files. PostgreSQL always has the trace.
     trace_dir: str | None = None
     process_name: str = "app"

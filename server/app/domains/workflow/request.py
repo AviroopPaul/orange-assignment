@@ -9,7 +9,9 @@ from typing import Any
 
 REQUIRED_FOR_SEARCH = ("service", "area", "start_date", "end_date")
 OPTIONAL_DETAILS = ("earliest_time", "latest_time", "max_budget", "preferences")
-ALL_FIELDS = (*REQUIRED_FOR_SEARCH, *OPTIONAL_DETAILS)
+# Only code sets this, from the user's own past bookings. It keeps the search to that provider.
+CHOSEN_PROVIDER = "provider_id"
+ALL_FIELDS = (*REQUIRED_FOR_SEARCH, *OPTIONAL_DETAILS, CHOSEN_PROVIDER)
 
 
 def field_value(request: dict[str, Any], name: str) -> Any:
