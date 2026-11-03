@@ -19,7 +19,7 @@ Last updated: 3 Nov 2026.
 | Non-functional requirements | 20 | 0 | 0 | 20 |
 | Eval scenarios | 38 | 0 | 0 | 38 |
 | Eval invariants | 8 | 0 | 0 | 8 |
-| Deliverables | 1 | 2 | 4 | 7 |
+| Deliverables | 3 | 3 | 1 | 7 |
 
 **In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It can cancel or move a booking the same way: a card, the user's own yes, then a worker that checks the provider before it reports success. It now remembers lasting facts across chats, and the user can inspect, correct and forget them. Every model call gets a context built by code, within 8,000 estimated tokens, and logged first. If a provider cancels a booking, the user hears about it with no prompt and gets replacements within their limits, and rebooking needs a new card. `make evals` now proves this offline: 38 scenarios, with 8 invariants read from the databases after each one.
 
@@ -237,12 +237,12 @@ Run on 3 Nov 2026 against the mock provider and gateway. Passing tests prove lit
 | Deliverable | Status | Notes |
 |---|---|---|
 | Git repo | Partial | [Private repo](https://github.com/AviroopPaul/orange-assignment) has the foundation |
-| Design note, 1 page | Not started | Write once the core exists |
+| Design note, 1 page | Done | [design-note.md](docs/design-note.md), and [design-note.pdf](docs/design-note.pdf), which renders to one A4 page |
 | Eval table | Done | `make evals` writes `evals/results.md`, `.json` and `.csv`. 38 scenarios |
 | Three real bugs | Partial | [BUGS.md](BUGS.md) has eighteen candidates and some smaller bugs. Choose three for the note |
-| End-to-end trace | Not started | The JSONL file now exists, with api and worker under one run ID. It needs a timeout-after-success run and the excerpt |
+| End-to-end trace | Done | [Raw JSONL](docs/trace-timeout-after-success.jsonl) from E11, with api and worker under one run ID, and an annotated excerpt in the note. The model in that run is scripted, and that run needs no model call |
 | Demo, 3 to 5 min | Not started | The UI can now show chat and trace side by side |
-| AI assistant transcript | Not started | Export at the end |
+| AI assistant transcript | Partial | `docs/transcript.md` is current to today. Run `make transcript` once more at the very end |
 
 ## Changes from the blueprint
 
@@ -337,9 +337,22 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 6. **Memory and ContextAssembler:** done.
 7. **Proactive cancellation, SSE and JSONL traces:** done.
 8. **Eval harness, table and invariants:** done.
-9. **Design note, trace excerpt, demo and transcript.**
+9. **Design note, trace excerpt, demo and transcript:** note and trace done. Demo and the final transcript are left.
+10. **Deliberate-break audit:** held until the end.
 
 ## Log
+
+### 4 Nov 2026: Eval job in CI
+
+- **Found:** the Evals job failed on PR 11, PR 12 and `main`. All 38 scenarios passed on GitHub's runner, and only writing the results files failed. PR 11 was merged before this job finished.
+- **Fix:** `make evals` now makes the committed results files writable. The CI run on PR 12 is the proof.
+
+### 3 Nov 2026: Design note and trace
+
+- **Design note:** one A4 page, checked by rendering it. The trace excerpt comes from a real E11 run.
+- **Trace:** the raw JSONL has the api and worker under one run ID. The evals now label the in-process API `api` in trace files.
+- **Secret scan:** the private-key check now needs a key body, because the transcript can mention the header in a sentence.
+- **Transcript:** appended up to now. Run `make transcript` once more at the very end.
 
 ### 3 Nov 2026: Eval harness, table and invariants
 

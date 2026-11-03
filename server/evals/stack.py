@@ -106,6 +106,7 @@ class Stack:
             "MOCK_PROVIDER_URL": f"http://127.0.0.1:{MOCK_PORT}",
             "CLOCK_OFFSET_S": str(self.offset_s),
             "TRACE_DIR": str(self.trace_dir),
+            "PROCESS_NAME": "api",
         }
 
     def _spawn(self, name: str, command: list[str], env: dict[str, str]) -> subprocess.Popen:

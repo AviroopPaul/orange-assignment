@@ -15,7 +15,8 @@ PATTERNS = {
     "Google API key": re.compile(r"AIza[0-9A-Za-z_\-]{35}"),
     "Groq API key": re.compile(r"gsk_[0-9A-Za-z]{20,}"),
     "OpenAI-style key": re.compile(r"\bsk-[A-Za-z0-9]{32,}"),
-    "Private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    # The body too, because the transcript may mention the header in a sentence.
+    "Private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----\s+[A-Za-z0-9+/=]{40,}"),
 }
 # These must never travel with the repo or into an image.
 MUST_IGNORE = {".gitignore": ".env", "server/.dockerignore": ".env"}
