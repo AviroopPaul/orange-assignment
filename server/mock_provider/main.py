@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Request
 from fastapi.responses import JSONResponse
@@ -154,6 +154,12 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_mock_settings()
     database = db or Database(settings.mock_database_url, pool_size=5, pool_pre_ping=True)
+    if real_now is None and settings.mock_clock_offset_s:
+        offset = timedelta(seconds=settings.mock_clock_offset_s)
+
+        def real_now() -> datetime:
+            return datetime.now(UTC) + offset
+
     service = MockProviderService(
         database, settings.mock_default_seed, settings.mock_timeout_hang_s, real_now
     )

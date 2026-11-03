@@ -1,13 +1,15 @@
 """The composition root. ADK is imported only when the api process needs it."""
 
 from dataclasses import dataclass
+from datetime import timedelta
+from functools import partial
 from typing import Any
 
 import httpx
 from redis.asyncio import Redis
 from taskiq import AsyncBroker
 
-from app.core.clock import LOCAL_TZ, Clock, SystemClock
+from app.core.clock import LOCAL_TZ, Clock, OffsetClock, SystemClock
 from app.core.config import Settings
 from app.core.database import Database
 from app.core.heartbeats import Heartbeats
@@ -86,7 +88,9 @@ def build_core(
 ) -> Core:
     db = db or Database(settings.errand_database_url, pool_size=5, pool_pre_ping=True)
     redis = redis or Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=10)
-    clock = clock or SystemClock()
+    clock = clock or (
+        OffsetClock(settings.clock_offset_s) if settings.clock_offset_s else SystemClock()
+    )
     heartbeats = Heartbeats(redis, settings.heartbeat_ttl_s)
     if publisher is None:
         if broker is None:
@@ -136,6 +140,7 @@ def build_core(
     memory = MemoryService(db, clock, workflows, traces)
     jobs.register(BOOK_JOB, saga.run_job)
     jobs.add_sweeper(saga.recover)
+    jobs.add_sweeper(partial(traces.close_abandoned, timedelta(seconds=settings.turn_lock_ttl_s)))
     proactive = ProactiveService(
         db,
         clock,

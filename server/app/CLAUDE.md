@@ -82,6 +82,13 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
 - **Redis wake-ups carry no news.** The row in PostgreSQL is the news, and each reader also looks on a timer. Publish only after commit, which `add_in` arranges.
 - **Workers cannot write to the chat.** The model reads their news because `agent/context.py` merges notifications into its history.
 - **Anything that scrubs traces must also scrub the JSONL files.** `TraceService.scrub_user` does both.
+- **"Same as last time" is resolved by code.** `use_past_provider` reads the user's finished bookings. One provider keeps the search to them, and several means the model must ask. Only code sets `provider_id` on a request.
+- **A run left open is closed by the sweep.** A live turn cannot outlast its lock, so a run older than that lost its process. `close_abandoned` gives it an outcome.
+- **A trace write finishes even if its caller is cancelled.** ADK cancels parallel tool calls when one spends the budget, and a lost write leaves a gap that I6 reports.
+
+## Evals
+
+`server/evals/` is outside `app`. `make evals` runs every scenario through the real routes, with real worker, scheduler and mock processes on real PostgreSQL and Redis. The checker in `invariants.py` reads the databases after each one. Add a scenario under `evals/scenarios/` with `@scenario`. Assert rows, not reply wording. To rerun a few, use `python -m evals --only E11,E12`, which writes to `results.partial.*` and leaves the full table alone.
 
 ## Not built yet
 

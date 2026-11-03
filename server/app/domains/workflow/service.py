@@ -20,6 +20,7 @@ from app.domains.workflow import dates
 from app.domains.workflow import request as details
 from app.domains.workflow.filters import apply_hard_limits, build_shortlist, open_days
 from app.domains.workflow.models import Workflow, WorkflowState
+from app.domains.workflow.past_bookings import past_providers, refers_to_past
 from app.domains.workflow.repository import WorkflowRepository
 from app.domains.workflow.schemas import RequestSnapshot
 from app.domains.workflow.state_machine import TRANSITIONS, check_transition
@@ -40,6 +41,7 @@ _SEARCH_INPUTS = frozenset(
         "earliest_time",
         "latest_time",
         "max_budget",
+        details.CHOSEN_PROVIDER,
     }
 )
 
@@ -403,7 +405,8 @@ class WorkflowService:
             from_memory: list[str] = []
 
             for name in clear_fields or []:
-                if name in details.OPTIONAL_DETAILS and name in merged:
+                clearable = (*details.OPTIONAL_DETAILS, details.CHOSEN_PROVIDER)
+                if name in clearable and name in merged:
                     del merged[name]
                     changed.add(name)
                 elif name in details.REQUIRED_FOR_SEARCH:
@@ -427,6 +430,10 @@ class WorkflowService:
                         "updated_at": now.isoformat(),
                     }
                     changed.add(name)
+
+            # A past provider belongs to the service it was chosen for.
+            if "service" in changed and merged.pop(details.CHOSEN_PROVIDER, None):
+                changed.add(details.CHOSEN_PROVIDER)
 
             # A pair of times must make sense together, or the new value is not kept.
             for name, problem in details.pair_rejections(merged).items():
@@ -457,6 +464,84 @@ class WorkflowService:
                 result["rejected"] = rejected
             events = [("filled_from_memory", {"fields": from_memory})] if from_memory else []
             return _Change(state=next_state, request=merged, result=result, events=events)
+
+        return (await self._apply(user_id, session_id, decide, recorder)).result
+
+    async def use_past_provider(
+        self,
+        user_id: str,
+        session_id: str,
+        service: str,
+        provider_id: str | None,
+        bookings: list[dict[str, Any]],
+        recorder: RunRecorder | None = None,
+    ) -> dict[str, Any]:
+        """Keep the search to who did this before, if the user asked and one provider fits."""
+        now = self._clock.now()
+        matches = past_providers(bookings, service)
+
+        def decide(workflow: Workflow) -> _Change:
+            if WorkflowState(workflow.state) in _BOOKING_RUNNING:
+                return _Change(result=_BOOKING_IN_PROGRESS)
+            if not refers_to_past(workflow.user_text):
+                return _Change(
+                    result={
+                        "error": "past_provider_not_requested",
+                        "message": "The user did not ask for a past provider. Nothing was saved.",
+                    }
+                )
+            if not matches:
+                return _Change(
+                    result={
+                        "error": "no_past_booking",
+                        "message": f"This user has no finished {service} booking. Tell them. "
+                        "Nothing was saved.",
+                    }
+                )
+            chosen = [item for item in matches if provider_id in (None, item["provider_id"])]
+            if not chosen:
+                return _Change(
+                    result={
+                        "error": "provider_not_in_past_bookings",
+                        "message": "That provider is not one this user booked for this service.",
+                        "past_providers": matches,
+                    }
+                )
+            if len(chosen) > 1:
+                return _Change(
+                    result={
+                        "several_match": chosen,
+                        "message": "More than one provider fits. Ask the user which one. Nothing "
+                        "was saved. Then call this again with their provider_id.",
+                    }
+                )
+
+            match = chosen[0]
+            merged = dict(workflow.request)
+            changed = False
+            for name, value in (
+                ("service", match["service"]),
+                (details.CHOSEN_PROVIDER, match["provider_id"]),
+            ):
+                if details.field_value(merged, name) != value:
+                    merged[name] = {
+                        "value": value,
+                        "source": "history",
+                        "updated_at": now.isoformat(),
+                    }
+                    changed = True
+            state = WorkflowState(workflow.state)
+            return _Change(
+                state=WorkflowState.INTAKE if changed and state in _REOPENED_BY_A_CHANGE else None,
+                request=merged,
+                result={
+                    "provider": match,
+                    "missing_fields": details.missing_required(merged),
+                    "message": "Search now keeps to this provider. Name them in your reply. Ask "
+                    "for anything still missing, then search.",
+                },
+                events=[("past_provider_used", {"provider_id": match["provider_id"]})],
+            )
 
         return (await self._apply(user_id, session_id, decide, recorder)).result
 
@@ -685,8 +770,14 @@ class WorkflowService:
         )
         target = await repository.get_by_id(workflow_id, lock=True)
         assert target is not None
+        # That provider has just cancelled, so a new search must not keep to them.
+        request = {k: v for k, v in target.request.items() if k != details.CHOSEN_PROVIDER}
         if not await repository.save(
-            workflow_id, target.version, shortlist=shortlist, updated_at=self._clock.now()
+            workflow_id,
+            target.version,
+            shortlist=shortlist,
+            request=request,
+            updated_at=self._clock.now(),
         ):
             raise WorkflowConflict(str(workflow_id))
         return moves

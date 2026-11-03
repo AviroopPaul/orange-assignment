@@ -1,5 +1,6 @@
 """A deterministic model, so tests and evals run offline through the real ADK loop."""
 
+import asyncio
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -17,8 +18,20 @@ class ToolCall:
     args: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class Pause:
+    """Holds the model call open and then plays `then`, so a test can act during a turn."""
+
+    seconds: float
+    then: Any = "Scripted reply."
+
+
 class ScriptedLlm(BaseLlm):
-    """Plays its steps in order, then repeats the last one. An Exception step is raised."""
+    """Plays its steps in order, then repeats the last one.
+
+    A step is text, a ToolCall, a list of ToolCalls made at once, or a Pause. An Exception step is
+    raised.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -32,15 +45,20 @@ class ScriptedLlm(BaseLlm):
     ) -> AsyncGenerator[LlmResponse, None]:
         step = self.script[min(len(self.requests), len(self.script) - 1)]
         self.requests.append(llm_request)
+        while isinstance(step, Pause):
+            await asyncio.sleep(step.seconds)
+            step = step.then
         if isinstance(step, Exception):
             raise step
-        part = (
-            types.Part(function_call=types.FunctionCall(name=step.name, args=step.args))
-            if isinstance(step, ToolCall)
-            else types.Part(text=step)
-        )
+        calls = step if isinstance(step, list) else [step]
+        parts = [
+            types.Part(function_call=types.FunctionCall(name=call.name, args=call.args))
+            if isinstance(call, ToolCall)
+            else types.Part(text=call)
+            for call in calls
+        ]
         yield LlmResponse(
-            content=types.Content(role="model", parts=[part]),
+            content=types.Content(role="model", parts=parts),
             usage_metadata=types.GenerateContentResponseUsageMetadata(
                 prompt_token_count=self.input_tokens,
                 candidates_token_count=self.output_tokens,

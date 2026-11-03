@@ -199,6 +199,60 @@ services:
       redis:
         condition: service_healthy
 
+  # `make evals`: its own PostgreSQL and Redis, on a network with no route out. Data lives in memory.
+  postgres-eval:
+    profiles: ["evals"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: errand
+      POSTGRES_PASSWORD: errand
+      POSTGRES_DB: postgres
+    volumes:
+      - ./server/docker/postgres/init-eval-databases.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [evals-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U errand -d adk_sessions_eval"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 512m
+
+  redis-eval:
+    profiles: ["evals"]
+    image: redis:8-alpine
+    networks: [evals-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 128m
+
+  evals:
+    profiles: ["evals"]
+    build:
+      context: ./server
+      target: test
+    image: errand-agent-server-test
+    command: ["python", "-m", "evals"]
+    environment:
+      GOOGLE_API_KEY: ""
+    volumes:
+      - ./evals:/srv/results
+    networks: [evals-net]
+    depends_on:
+      postgres-eval:
+        condition: service_healthy
+      redis-eval:
+        condition: service_healthy
+    mem_limit: 2g
+
+networks:
+  evals-net:
+    internal: true
+
 volumes:
   postgres-data:
   redis-data:

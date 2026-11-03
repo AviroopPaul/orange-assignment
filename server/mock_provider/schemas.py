@@ -161,6 +161,10 @@ class ScenarioConfig(_Strict):
     provider_prices: dict[str, int] | None = None
     slot_conflicts: list[str] | None = None
     timeout_hang_s: float | None = None
+    # `get_provider` holds the connection this long, so a worker can die just before `book`.
+    get_provider_hang_s: float | None = None
+    # How many calls to `cancel` get a 503 first. The brief's default is the first one.
+    cancel_failures: int | None = None
     reset_clock: bool = False
 
 

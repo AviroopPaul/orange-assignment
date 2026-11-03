@@ -166,6 +166,7 @@ def test_model_can_only_reach_read_and_propose_tools() -> None:
     assert allowed == {
         "update_request",
         "resolve_dates",
+        "use_past_provider",
         "propose_booking",
         "propose_cancel",
         "propose_reschedule",

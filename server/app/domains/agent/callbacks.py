@@ -22,7 +22,7 @@ from app.domains.tracing.service import ModelUsage, RunRecorder
 from app.domains.workflow.service import WorkflowService
 
 FALSE_CLAIM_REPLY = (
-    "I can't confirm that yet. I only say something is booked or changed "
+    "I can't confirm that yet. I only report a booking or a change "
     "once the provider has verified it."
 )
 

@@ -127,6 +127,11 @@ class ProposeMemoryArgs(_Strict):
     scope: str = Field(default="all", pattern=r"^[a-z_]{1,40}$")
 
 
+class UsePastProviderArgs(_Strict):
+    service: str = Field(min_length=1, max_length=60)
+    provider_id: str | None = Field(default=None, min_length=1, max_length=20)
+
+
 class ForgetMemoryArgs(_Strict):
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
     scope: str = Field(default="all", pattern=r"^[a-z_]{1,40}$")

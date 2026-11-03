@@ -1,7 +1,7 @@
 # `docker compose` when the plugin works, otherwise the standalone binary.
 COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: up down logs reset ps test test-web test-integration check smoke web-dev transcript
+.PHONY: up down logs reset ps test test-web test-integration evals check smoke web-dev transcript
 
 up:
 	$(COMPOSE) up --build -d --wait
@@ -34,6 +34,15 @@ web-dev:
 test-integration:
 	$(COMPOSE) --profile test build tests
 	$(COMPOSE) --profile test run --rm tests
+
+# Every scenario, offline, on its own throwaway PostgreSQL and Redis. Writes evals/results.*.
+evals:
+	mkdir -p evals
+	chmod a+rwx evals
+	$(COMPOSE) --profile evals rm -fsv postgres-eval redis-eval
+	$(COMPOSE) --profile evals build evals
+	$(COMPOSE) --profile evals run --rm evals; status=$$?; \
+	$(COMPOSE) --profile evals rm -fsv postgres-eval redis-eval; exit $$status
 
 check:
 	cd server && ./scripts/check.sh

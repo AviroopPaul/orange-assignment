@@ -1,9 +1,11 @@
 """Records runs. A trace write failure must never change a user's outcome."""
 
+import asyncio
 import logging
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -19,6 +21,10 @@ from app.domains.tracing.schemas import RunTraceRead, TraceEventRead
 logger = logging.getLogger(__name__)
 
 SEQ_ATTEMPTS = 5
+PROCESS_DIED = "process_died"
+ABANDONED_REPLY = (
+    "This message was interrupted by a restart before it finished. Please send it again."
+)
 
 
 class RunNotFound(Exception):
@@ -79,23 +85,9 @@ class RunRecorder:
                 created_at=self._clock.now(),
             )
             try:
-                async with self._db.session_scope() as session:
-                    await TraceRepository(session).add_event(event)
-                if self._files is not None:
-                    self._files.append(
-                        self.run_id,
-                        {
-                            "seq": event.seq,
-                            "at": event.created_at.isoformat(),
-                            "kind": kind,
-                            "name": name,
-                            "data": event.data,
-                            "latency_ms": latency_ms,
-                            "input_tokens": input_tokens,
-                            "output_tokens": output_tokens,
-                            "estimated_cost_usd": estimated_cost_usd,
-                        },
-                    )
+                # A caller cancelled mid-write must not leave a gap in the trace. This happens when
+                # a parallel tool call spends the budget and ADK cancels the others.
+                await asyncio.shield(self._store(event))
                 return
             except IntegrityError:
                 self._seq = await self._last_seq()
@@ -103,6 +95,23 @@ class RunRecorder:
                 logger.exception("could not write trace event %s for run %s", kind, self.run_id)
                 return
         logger.error("gave up on trace event %s for run %s", kind, self.run_id)
+
+    async def _store(self, event: TraceEvent) -> None:
+        line = {
+            "seq": event.seq,
+            "at": event.created_at.isoformat(),
+            "kind": event.kind,
+            "name": event.name,
+            "data": event.data,
+            "latency_ms": event.latency_ms,
+            "input_tokens": event.input_tokens,
+            "output_tokens": event.output_tokens,
+            "estimated_cost_usd": event.estimated_cost_usd,
+        }
+        async with self._db.session_scope() as session:
+            await TraceRepository(session).add_event(event)
+        if self._files is not None:
+            self._files.append(self.run_id, line)
 
     async def _last_seq(self) -> int:
         async with self._db.session_scope() as session:
@@ -155,17 +164,39 @@ class TraceService:
         return RunRecorder(self._db, self._clock, run_id, seq, self._files)
 
     async def settle_run(
-        self, recorder: RunRecorder, outcome: str, reply: str, settled_by: str = "saga"
+        self,
+        recorder: RunRecorder,
+        outcome: str,
+        reply: str,
+        settled_by: str = "saga",
+        reason: str | None = None,
     ) -> None:
         """A run left open gets its real outcome. Its model counts stay as they are."""
         await recorder.event("outcome", name=outcome, data={"settled_by": settled_by})
         try:
             async with self._db.session_scope() as session:
                 await TraceRepository(session).finish_run(
-                    recorder.run_id, outcome=outcome, reply=reply, finished_at=self._clock.now()
+                    recorder.run_id,
+                    outcome=outcome,
+                    reason=reason,
+                    reply=reply,
+                    finished_at=self._clock.now(),
                 )
         except (SQLAlchemyError, OSError):
             logger.exception("could not settle run %s", recorder.run_id)
+
+    async def close_abandoned(self, older_than: timedelta) -> int:
+        """A run still open after this long lost its process, because a live turn cannot outlast
+        its lock. The sweep calls this, so every run ends with an outcome."""
+        cutoff = self._clock.now() - older_than
+        async with self._db.session_scope() as session:
+            run_ids = await TraceRepository(session).open_run_ids(cutoff)
+        for run_id in run_ids:
+            recorder = await self.resume_run(run_id)
+            await self.settle_run(
+                recorder, "tool_failed", ABANDONED_REPLY, settled_by="sweep", reason=PROCESS_DIED
+            )
+        return len(run_ids)
 
     async def finish_run(
         self, recorder: RunRecorder, outcome: str, reason: str | None, reply: str

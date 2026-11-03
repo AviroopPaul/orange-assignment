@@ -14,3 +14,13 @@ class Clock(Protocol):
 class SystemClock:
     def now(self) -> datetime:
         return datetime.now(UTC)
+
+
+class OffsetClock:
+    """Real time, moved by a fixed amount. Every eval process starts from the same fake day."""
+
+    def __init__(self, offset_s: float) -> None:
+        self._offset = timedelta(seconds=offset_s)
+
+    def now(self) -> datetime:
+        return datetime.now(UTC) + self._offset
