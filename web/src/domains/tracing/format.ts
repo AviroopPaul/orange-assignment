@@ -17,7 +17,9 @@ const KIND_LABELS: Record<string, string> = {
   model_call: "Model call",
   model_error: "Model error",
   model_unavailable: "Model unavailable",
+  tool_call: "Tool call",
   tool_refused: "Tool refused",
+  tool_error: "Tool error",
   unexpected_error: "Unexpected error",
   outcome: "Outcome",
 };

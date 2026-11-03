@@ -1,7 +1,7 @@
 """The full HTTP path: real routers, services and ADK, with a scripted model."""
 
 from collections.abc import AsyncIterator
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -27,8 +27,16 @@ def container(
     redis: Redis,
     clock: FakeClock,
     publisher: RecordingPublisher,
+    provider_transport: httpx.AsyncBaseTransport,
 ) -> ApiContainer:
-    core = build_core(settings, publisher=publisher, db=db, redis=redis, clock=clock)
+    core = build_core(
+        settings,
+        publisher=publisher,
+        db=db,
+        redis=redis,
+        clock=clock,
+        provider_transport=provider_transport,
+    )
     return build_api_container(
         core,
         model=ScriptedLlm(model="gemini-3.5-flash-lite", script=["Which area are you in?"]),
@@ -138,6 +146,7 @@ async def test_status_reports_worker_and_scheduler(
     before = (await client.get("/system/status")).json()
     assert before["worker"] is False and before["scheduler"] is False
     assert before["model_configured"] is True
+    assert before["provider"] is True
 
     await container.core.heartbeats.beat(f"{WORKER_HEARTBEAT_PREFIX}host-a")
     await container.core.heartbeats.beat(SCHEDULER_HEARTBEAT)
@@ -172,3 +181,16 @@ async def test_ping_with_redis_down_is_still_recorded(
 async def test_unknown_ping_is_404(client: httpx.AsyncClient) -> None:
     missing = "00000000-0000-0000-0000-000000000000"
     assert (await client.get(f"/system/ping/{missing}")).status_code == 404
+
+
+async def test_status_reports_an_unreachable_provider(
+    client: httpx.AsyncClient, container: ApiContainer
+) -> None:
+    """A provider outage is reported, but the API itself is still ready to explain it."""
+    with patch.object(
+        container.core.provider_client, "is_reachable", AsyncMock(return_value=False)
+    ):
+        status = (await client.get("/system/status")).json()
+        ready = await client.get("/readyz")
+    assert status["provider"] is False
+    assert ready.status_code == 200

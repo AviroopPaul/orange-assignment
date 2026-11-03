@@ -20,7 +20,12 @@ class Settings(BaseSettings):
     model_request_timeout_s: float = 30
     model_attempts: int = 2
 
+    mock_provider_url: str = "http://localhost:8100"
+    tool_timeout_s: float = 10
+    tool_retry_backoff_s: float = 0.2
+
     max_model_calls: int = 8
+    max_tool_calls: int = 12
     run_deadline_s: float = 120
     turn_lock_ttl_s: float = 150
     turn_lock_wait_s: float = 125

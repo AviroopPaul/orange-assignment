@@ -21,6 +21,7 @@ class FailureReason(StrEnum):
     MODEL_NOT_CONFIGURED = "model_not_configured"
     MODEL_UNAVAILABLE = "model_unavailable"
     MODEL_CALL_LIMIT = "model_call_limit"
+    TOOL_CALL_LIMIT = "tool_call_limit"
     RUN_DEADLINE = "run_deadline"
     EMPTY_MODEL_REPLY = "empty_model_reply"
     SESSION_BUSY = "session_busy"

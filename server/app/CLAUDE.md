@@ -14,7 +14,8 @@ app/
   core/           config, clock, database, turn lock, heartbeats
   domains/
     chat/         turn controller: limits, lock, outcomes, replies
-    agent/        ADK adapter, Gemini config, scripted model, prompt, callbacks
+    agent/        ADK adapter, Gemini config, scripted model, prompt, callbacks, model tools
+    gateway/      the only path to any tool: rights, schema, budget, retries, sanitize, trace
     jobs/         outbox, publish, sweep, lease, taskiq broker and tasks
     tracing/      runs, trace events, cost
     system/       health, status, ping job
@@ -49,6 +50,9 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
   with `StaleSessionError`. Workers write to `errand` instead.
 - **Every exit from a chat turn maps to one `Outcome`.** New failures need a `FailureReason` and a reply
   in `FAILURE_REPLIES`.
+- **Every tool call goes through `ToolGateway.call`.** Only `gateway/client.py` talks to the provider. `book`, `cancel` and `reschedule` need `Caller.SAGA` and a valid approval. The model never gets them as tools.
+- **A refusal is a result, not an exception.** Only a spent budget raises, because it must end the run.
+- **Reviews are data.** Safety comes from what the model can do, not from filtering text. Flags inform the trace; they do not block.
 - **Gemini rejects a request deadline under 10 s.** Config validation stops this at startup.
 
 ## Not built yet

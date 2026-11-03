@@ -56,4 +56,6 @@ def create_app(container_factory: ContainerFactory = _build_live_container) -> F
 
 
 logging.basicConfig(level=logging.INFO)
+# Every status poll calls the provider, which would otherwise bury the useful log lines.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 app = create_app()

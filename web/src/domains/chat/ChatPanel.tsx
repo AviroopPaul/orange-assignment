@@ -88,8 +88,8 @@ export function ChatPanel({
           <div className="empty">
             <p className="empty-title">Tell the agent what you need done at home.</p>
             <p className="notice">
-              Chat only for now. Provider search, booking and memory are not connected yet, so the
-              agent will collect details and tell you it can't complete the booking.
+              The agent can search and compare providers and show your bookings. Holding, booking
+              and memory are not connected yet, so it will tell you it can't complete a booking.
             </p>
             <p className="examples-label">Try one of these</p>
             <div className="examples">

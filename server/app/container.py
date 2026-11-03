@@ -3,15 +3,18 @@
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from redis.asyncio import Redis
 from taskiq import AsyncBroker
 
-from app.core.clock import Clock, SystemClock
+from app.core.clock import LOCAL_TZ, Clock, SystemClock
 from app.core.config import Settings
 from app.core.database import Database
 from app.core.heartbeats import Heartbeats
 from app.core.locks import RedisTurnLock
 from app.domains.chat.service import ChatService
+from app.domains.gateway.client import ProviderClient
+from app.domains.gateway.service import ApprovalVerifier, DenyAllApprovals, ToolGateway
 from app.domains.jobs.broker import TaskiqJobPublisher
 from app.domains.jobs.service import JobHandler, JobPublisher, JobService
 from app.domains.system.service import PING_JOB, SystemService, handle_ping
@@ -31,8 +34,11 @@ class Core:
     heartbeats: Heartbeats
     jobs: JobService
     system: SystemService
+    gateway: ToolGateway
+    provider_client: ProviderClient
 
     async def close(self) -> None:
+        await self.provider_client.close()
         await self.redis.aclose()
         await self.db.dispose()
 
@@ -58,6 +64,8 @@ def build_core(
     redis: Redis | None = None,
     clock: Clock | None = None,
     handlers: dict[str, JobHandler] | None = None,
+    provider_transport: httpx.AsyncBaseTransport | None = None,
+    approvals: ApprovalVerifier | None = None,
 ) -> Core:
     db = db or Database(settings.errand_database_url, pool_size=5, pool_pre_ping=True)
     redis = redis or Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=10)
@@ -76,8 +84,19 @@ def build_core(
         lease_s=settings.job_lease_s,
         max_attempts=settings.job_max_attempts,
     )
-    system = SystemService(db, redis, heartbeats, jobs, settings.model_is_configured)
-    return Core(settings, db, redis, clock, heartbeats, jobs, system)
+    provider_client = ProviderClient(
+        settings.mock_provider_url, settings.tool_timeout_s, transport=provider_transport
+    )
+    gateway = ToolGateway(
+        provider_client,
+        # Until the approvals domain exists, nothing that needs approval can run.
+        approvals or DenyAllApprovals(),
+        settings.tool_retry_backoff_s,
+    )
+    system = SystemService(
+        db, redis, heartbeats, jobs, gateway.is_provider_reachable, settings.model_is_configured
+    )
+    return Core(settings, db, redis, clock, heartbeats, jobs, system, gateway, provider_client)
 
 
 def build_api_container(
@@ -96,7 +115,10 @@ def build_api_container(
     runtime = AdkAgentRuntime(
         model=model or build_model(settings),
         session_service=session_service or DatabaseSessionService(db_url=settings.adk_database_url),
+        gateway=core.gateway,
         max_model_calls=settings.max_model_calls,
+        max_tool_calls=settings.max_tool_calls,
+        today=lambda: core.clock.now().astimezone(LOCAL_TZ).date(),
         request_config=build_request_config(settings),
     )
     chat = ChatService(

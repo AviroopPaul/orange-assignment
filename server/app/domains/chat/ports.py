@@ -10,6 +10,10 @@ class ModelCallLimitExceeded(Exception):
     pass
 
 
+class ToolCallLimitExceeded(Exception):
+    pass
+
+
 class ModelUnavailable(Exception):
     """The model failed or timed out after its retry."""
 

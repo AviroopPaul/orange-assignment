@@ -10,6 +10,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
+from app.domains.gateway.service import CallContext, ToolBudgetExhausted, ToolGateway
 from app.domains.tracing.service import ModelUsage, RunRecorder
 
 
@@ -17,6 +18,9 @@ from app.domains.tracing.service import ModelUsage, RunRecorder
 class TurnTelemetry:
     recorder: RunRecorder
     model_name: str
+    gateway: ToolGateway
+    tool_context: CallContext
+    model_tool_names: frozenset[str]
     call_started_at: float = 0.0
 
 
@@ -73,13 +77,24 @@ async def on_model_error(
 
 async def on_tool_error(
     tool: BaseTool, args: dict, tool_context: ToolContext, error: Exception
-) -> dict:
-    """ADK fires this for a tool the model made up. The model gets the error and nothing runs."""
+) -> dict | None:
+    """ADK fires this for a tool the model made up, or one it was never given.
+
+    Both go to the gateway, which refuses, traces and counts them. The model gets the refusal.
+    Returning None lets a spent budget end the run.
+    """
+    if isinstance(error, ToolBudgetExhausted):
+        return None
     turn = current_turn.get()
-    if turn is not None:
+    if turn is None:
+        return {"error": "tool_failed", "message": "No action was taken."}
+    if tool.name in turn.model_tool_names:
+        # A real tool raised. It never reached the gateway's result path, so report it here.
         await turn.recorder.event(
-            "tool_refused",
+            "tool_error",
             name=tool.name,
-            data={"args": args, "error": type(error).__name__},
+            data={"error": type(error).__name__},
         )
-    return {"error": f"Tool '{tool.name}' is not available. No action was taken."}
+        return {"error": "tool_failed", "message": "That tool failed. No action was taken."}
+    result = await turn.gateway.call(tool.name, args, turn.tool_context)
+    return {"error": result.error_code, "message": result.message}

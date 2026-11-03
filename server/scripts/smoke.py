@@ -23,6 +23,7 @@ async def main() -> None:
         status = (await client.get("/system/status")).json()
         check("worker and scheduler are alive", status["worker"] and status["scheduler"], status)
         check("model key is configured", status["model_configured"])
+        check("mock provider is reachable", status["provider"])
 
         ping = (await client.post("/system/ping")).json()
         for _ in range(50):
@@ -67,6 +68,27 @@ async def main() -> None:
                 "estimated_cost_usd": trace["estimated_cost_usd"],
                 "events": [event["kind"] for event in trace["events"]],
             },
+        )
+
+        search = (
+            await client.post(
+                "/chat",
+                json={
+                    "user_id": "smoke",
+                    "message": "Find a plumber in Indiranagar for any day in the next 3 days, "
+                    "any time, budget 5000. Search now and name one provider.",
+                },
+            )
+        ).json()
+        trace = (await client.get(f"/runs/{search['run_id']}/trace")).json()
+        calls = [event for event in trace["events"] if event["kind"] == "tool_call"]
+        check(
+            "live model searched through the gateway",
+            any(
+                call["name"] == "search_providers" and call["data"]["status"] == "ok"
+                for call in calls
+            ),
+            search["reply"][:120],
         )
 
 

@@ -1,4 +1,4 @@
-# One Python image for api, worker, scheduler and migrate, with different commands.
+# One Python image for api, worker, scheduler, migrate and mock-provider, with different commands.
 FROM python:3.12-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
@@ -12,6 +12,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
+COPY mock_provider ./mock_provider
 RUN useradd --create-home --uid 1000 errand && chown -R errand /srv
 USER errand
 
