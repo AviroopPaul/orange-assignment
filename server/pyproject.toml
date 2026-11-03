@@ -48,6 +48,10 @@ extend-exclude = ["alembic/versions", "mock_provider/migrations/versions"]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 ignore = ["B008"]
 
+[tool.ruff.lint.per-file-ignores]
+# One page of HTML, kept as one string.
+"mock_provider/panel.py" = ["E501"]
+
 [tool.ruff.lint.isort]
 known-third-party = ["alembic"]
 known-first-party = ["app", "mock_provider", "tests"]

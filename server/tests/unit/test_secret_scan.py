@@ -13,7 +13,9 @@ def test_each_kind_of_key_is_found() -> None:
     assert find_secrets(f"key = {FAKE_KEY}") == ["Google API key"]
     assert find_secrets("gsk_" + "a" * 30) == ["Groq API key"]
     assert find_secrets("sk-" + "a" * 40) == ["OpenAI-style key"]
-    assert find_secrets("-----BEGIN RSA " + "PRIVATE KEY-----") == ["Private key"]
+    header = "-----BEGIN RSA " + "PRIVATE KEY-----"
+    assert find_secrets(f"{header}\n{'A' * 64}") == ["Private key"]
+    assert find_secrets(f"the {header} line, in a sentence") == []
 
 
 def test_the_real_key_value_is_found_whatever_it_looks_like() -> None:

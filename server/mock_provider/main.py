@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.database import Database
 from mock_provider.config import MockSettings, get_mock_settings
+from mock_provider.panel import PANEL_HTML
 from mock_provider.schemas import (
     AdvanceClock,
     BookingRead,
@@ -23,6 +24,7 @@ from mock_provider.schemas import (
     ListBookingsOutput,
     ProviderCancel,
     ProviderDetails,
+    ProviderState,
     RescheduleInput,
     ScenarioConfig,
     SearchProvidersInput,
@@ -133,6 +135,16 @@ async def provider_cancel(
     body: ProviderCancel, service: MockProviderService = Depends(get_service)
 ) -> BookingRead:
     return await service.provider_cancel(body.booking_id)
+
+
+@admin.get("/state", response_model=ProviderState)
+async def read_state(service: MockProviderService = Depends(get_service)) -> ProviderState:
+    return await service.read_state()
+
+
+@admin.get("/panel", response_class=HTMLResponse)
+async def panel() -> str:
+    return PANEL_HTML
 
 
 @admin.post("/reset", status_code=204)

@@ -14,6 +14,7 @@ x-server: &server
     GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     MODEL_NAME: ${MODEL_NAME:-gemini-3-flash-preview}
     MODEL_MODE: ${MODEL_MODE:-live}
+    PROVIDER_POLL_INTERVAL_S: ${PROVIDER_POLL_INTERVAL_S:-20}
 
 services:
   postgres:

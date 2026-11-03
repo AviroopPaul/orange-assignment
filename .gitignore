@@ -12,6 +12,7 @@ dist/
 
 # The brief belongs to Orange, so it stays out of the repo.
 *.pdf
+!docs/design-note.pdf
 
 # Trace files from a local run. Curated excerpts go in docs/.
 artifacts/*

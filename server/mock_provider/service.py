@@ -19,6 +19,7 @@ from mock_provider.schemas import (
     HoldRead,
     ProviderAttributes,
     ProviderDetails,
+    ProviderState,
     ProviderSummary,
     ReviewRead,
     ScenarioConfig,
@@ -463,6 +464,15 @@ class MockProviderService:
         return parsed is not None and parsed.hour == catalog.DEFAULT_CONFLICT_HOUR
 
     # Eval-only controls
+
+    async def read_state(self) -> ProviderState:
+        async with self._db.session_scope() as session:
+            state = await MockRepository(session).read_state(self._default_seed)
+            return ProviderState(
+                scenario=state.scenario,
+                book_outcomes_used=state.book_outcomes_used,
+                clock_offset_s=state.clock_offset_s,
+            )
 
     async def configure_scenario(self, config: ScenarioConfig) -> None:
         async with self._db.session_scope() as session:

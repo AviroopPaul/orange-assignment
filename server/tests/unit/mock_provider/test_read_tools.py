@@ -215,3 +215,31 @@ async def test_clock_moves_only_through_the_admin_route(mock: Mock) -> None:
     assert response.status_code == 200
     hold = await mock.hold()
     assert hold["expires_at"].startswith((before + timedelta(hours=1, minutes=10)).isoformat()[:19])
+
+
+async def test_the_demo_page_and_state_exist_only_in_eval_mode(mock: Mock) -> None:
+    page = await mock.http.get("/admin/panel")
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    assert "Provider cancels" in page.text
+    # Each thing the page does is a route that exists.
+    for path in ("/admin/scenario", "/admin/provider-cancel", "/admin/clock/advance"):
+        assert path in page.text
+
+    await mock.scenario(
+        book_outcomes=["timeout_booked", "success"], provider_prices={"plm-07": 1390}
+    )
+    state = (await mock.http.get("/admin/state")).json()
+    assert state["scenario"]["book_outcomes"] == ["timeout_booked", "success"]
+    assert state["scenario"]["provider_prices"] == {"plm-07": 1390}
+    assert state["book_outcomes_used"] == 0
+
+
+async def test_the_demo_page_is_off_outside_eval_mode() -> None:
+    app = create_app(
+        settings=MockSettings(mock_eval_mode=False), db=Database("sqlite+aiosqlite://")
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://mock") as http:
+        assert (await http.get("/admin/panel")).status_code == 404
+        assert (await http.get("/admin/state")).status_code == 404

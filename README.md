@@ -44,6 +44,7 @@ curl -s localhost:8000/runs/RUN_ID/trace
 | Command | What it does |
 |---|---|
 | `make up` | Build, start and wait until every service is healthy |
+| `make demo` | The stack for the demo: provider controls on, and the console at `http://localhost:8100/admin/panel`. `make demo-reset` deletes all data first. See `docs/demo-plan.md` |
 | `make smoke` | Check the running stack end to end, using the live model |
 | `make test` | Server unit tests. No Docker or network needed |
 | `make test-web` | UI tests. No Docker or network needed |
