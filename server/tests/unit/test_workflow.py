@@ -8,7 +8,7 @@ from app.core.database import Database
 from app.domains.gateway.schemas import RefusalReason
 from app.domains.tracing.service import TraceService
 from app.domains.workflow import request as details
-from app.domains.workflow.filters import MAX_SLOTS_SHOWN, apply_hard_limits
+from app.domains.workflow.filters import apply_hard_limits, build_shortlist
 from app.domains.workflow.models import Workflow
 from app.domains.workflow.models import WorkflowState as S
 from app.domains.workflow.repository import WorkflowRepository
@@ -204,17 +204,17 @@ def test_budget_is_a_hard_limit_and_includes_the_exact_amount() -> None:
 
 
 def test_earliest_time_includes_that_minute() -> None:
-    result = apply_hard_limits(
+    result = build_shortlist(
         [provider("p", 100, [MORNING, TEN, NOON])], entries(earliest_time="10:00")
     )
-    assert result["providers"][0]["slots"] == [TEN, NOON]
+    assert result["p"]["slots"] == [TEN, NOON]
 
 
 def test_latest_time_excludes_that_minute_so_mornings_end_before_noon() -> None:
-    result = apply_hard_limits(
+    result = build_shortlist(
         [provider("p", 100, [MORNING, TEN, NOON])], entries(latest_time="12:00")
     )
-    assert result["providers"][0]["slots"] == [MORNING, TEN]
+    assert result["p"]["slots"] == [MORNING, TEN]
 
 
 def test_provider_with_no_slot_in_the_window_is_removed() -> None:
@@ -238,12 +238,13 @@ def test_nothing_fits_says_why() -> None:
     assert result["removed"]["over_budget"] == 1
 
 
-def test_result_is_compact_and_says_what_was_cut() -> None:
-    slots = [f"2026-11-0{day}T09:00:00+05:30" for day in range(3, 10)]
+def test_result_names_the_open_days_and_no_times() -> None:
+    slots = ["2026-11-09T09:00:00+05:30", "2026-11-09T10:00:00+05:30", "2026-11-11T09:00:00+05:30"]
     item = apply_hard_limits([provider("p", 100, slots)], {})["providers"][0]
-    assert len(item["slots"]) == MAX_SLOTS_SHOWN
-    assert item["more_slots"] == 1
+    assert item["open_days"] == ["2026-11-09 Mon", "2026-11-11 Wed"]
+    assert "slots" not in item
     assert "attributes" not in item
+    assert "09:00" not in str(item)
 
 
 def test_unreadable_slot_is_dropped_rather_than_trusted() -> None:
@@ -583,7 +584,7 @@ async def test_no_date_mentioned_means_nothing_can_be_saved(workflow: WorkflowSe
     result = await workflow.resolve_dates(USER, SESSION, "tomorrow")
 
     assert result["error"] == "date_not_stated"
-    assert "Ask them" in result["message"]
+    assert "ask which day" in result["message"]
     snapshot = await workflow.snapshot(USER, SESSION)
     assert "start_date" in snapshot.missing_required
     assert snapshot.dates_to_show is None
@@ -691,3 +692,109 @@ async def test_a_date_the_user_never_said_is_still_refused_when_others_are_saved
     result = await workflow.resolve_dates(USER, SESSION, "14/11/2026")
     assert result["error"] == "date_not_stated"
     assert (await workflow.snapshot(USER, SESSION)).details["start_date"] == "2026-11-07"
+
+
+async def test_a_bare_day_after_next_week_means_that_weeks_day(workflow: WorkflowService) -> None:
+    """From a real chat: "next week sometime", then "lets do thur", gave this Thursday."""
+    await workflow.record_user_message(USER, SESSION, "next week sometime")
+    await workflow.resolve_dates(USER, SESSION, "next week sometime")
+    await workflow.record_user_message(USER, SESSION, "lets do thur")
+
+    result = await workflow.resolve_dates(USER, SESSION, "thur")
+
+    assert "12/11/2026" in result["dates"]
+    details = (await workflow.snapshot(USER, SESSION)).details
+    assert details["start_date"] == details["end_date"] == "2026-11-12"
+
+
+async def test_words_that_name_their_own_day_are_not_narrowed(workflow: WorkflowService) -> None:
+    await workflow.record_user_message(USER, SESSION, "next week sometime")
+    await workflow.resolve_dates(USER, SESSION, "next week sometime")
+    await workflow.record_user_message(USER, SESSION, "actually this thursday")
+
+    result = await workflow.resolve_dates(USER, SESSION, "this thursday")
+
+    assert "05/11/2026" in result["dates"]
+
+
+async def test_a_day_outside_the_saved_range_is_a_new_date(workflow: WorkflowService) -> None:
+    await workflow.record_user_message(USER, SESSION, "9 Nov to 10 Nov")
+    await workflow.resolve_dates(USER, SESSION, "9 Nov to 10 Nov")
+    await workflow.record_user_message(USER, SESSION, "friday then")
+
+    result = await workflow.resolve_dates(USER, SESSION, "friday")
+
+    assert "06/11/2026" in result["dates"]
+
+
+# One provider, one day. From a real chat: the model named Tuesday times this provider never had.
+
+
+async def searched_next_week(workflow: WorkflowService) -> None:
+    await workflow.record_user_message(USER, SESSION, "plumber in Indiranagar next week")
+    await workflow.update_request(USER, SESSION, {"service": "plumber", "area": "Indiranagar"})
+    await workflow.resolve_dates(USER, SESSION, "next week")
+    await workflow.begin_search(USER, SESSION)
+    await workflow.finish_search(
+        USER,
+        SESSION,
+        [
+            provider("quick", 100, ["2026-11-09T10:00:00+05:30", "2026-11-11T09:00:00+05:30"]),
+            provider("city", 100, ["2026-11-10T10:00:00+05:30", "2026-11-10T11:00:00+05:30"]),
+        ],
+    )
+
+
+@pytest.mark.parametrize("day", ["2026-11-10", "2026-11-10 Tue", "Tuesday", "tue", "on tue"])
+async def test_a_providers_times_on_one_day(workflow: WorkflowService, day: str) -> None:
+    await searched_next_week(workflow)
+    result = await workflow.open_slots(USER, SESSION, "city", day)
+    assert result["slots"] == ["2026-11-10T10:00", "2026-11-10T11:00"]
+    assert result["day"] == "Tuesday 10/11/2026"
+
+
+async def test_each_provider_has_its_own_times(workflow: WorkflowService) -> None:
+    await searched_next_week(workflow)
+    result = await workflow.open_slots(USER, SESSION, "quick", "2026-11-10")
+    assert result["slots"] == []
+    assert result["open_days"] == ["2026-11-09 Mon", "2026-11-11 Wed"]
+    assert "Nothing is open" in result["message"]
+
+
+async def test_a_day_outside_the_search_is_not_answered(workflow: WorkflowService) -> None:
+    await searched_next_week(workflow)
+    result = await workflow.open_slots(USER, SESSION, "quick", "2026-11-20")
+    assert result["error"] == "outside_search_dates"
+    assert "resolve_dates" in result["message"]
+
+
+async def test_unknown_provider_day_or_no_search_is_refused(workflow: WorkflowService) -> None:
+    missing = await workflow.open_slots(USER, SESSION, "quick", "tue")
+    assert missing["error"] == "search_first"
+    await searched_next_week(workflow)
+    other = await workflow.open_slots(USER, SESSION, "nobody", "tue")
+    assert other["error"] == "provider_not_in_results"
+    unread = await workflow.open_slots(USER, SESSION, "quick", "soon")
+    assert unread["error"] == "day_not_understood"
+
+
+async def test_a_refused_slot_says_what_is_really_open(workflow: WorkflowService) -> None:
+    await searched_next_week(workflow)
+    refused = await workflow.proposal_target(USER, SESSION, "quick", "2026-11-09T11:00")
+    assert refused["error"] == "slot_not_in_results"
+    assert refused["open_that_day"] == ["2026-11-09T10:00"]
+    assert refused["open_days"] == ["2026-11-09 Mon", "2026-11-11 Wed"]
+
+    empty = await workflow.proposal_target(USER, SESSION, "quick", "2026-11-10T11:00")
+    assert empty["open_that_day"] == []
+
+    unread = await workflow.proposal_target(USER, SESSION, "quick", "whenever")
+    assert "open_that_day" not in unread
+    assert unread["open_days"]
+
+
+async def test_a_listed_short_slot_can_be_proposed(workflow: WorkflowService) -> None:
+    await searched_next_week(workflow)
+    target = await workflow.proposal_target(USER, SESSION, "city", "2026-11-10T11:00")
+    assert not isinstance(target, dict)
+    assert target.slot == "2026-11-10T11:00:00+05:30"

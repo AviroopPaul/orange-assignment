@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 
 import { ChatPanel } from "./domains/chat/ChatPanel";
 import { useChat } from "./domains/chat/useChat";
+import { MemoryPanel } from "./domains/memory/MemoryPanel";
 import { StatusBar } from "./domains/system/StatusBar";
 import { TracePanel } from "./domains/tracing/TracePanel";
 
@@ -30,10 +31,12 @@ export function App() {
           selectedRunId={shownRunId}
           onSend={chat.send}
           onAnswer={(card, choice) => void chat.answer(card, choice)}
+          onAnswerMemory={(item, remember) => void chat.answerMemory(item, remember)}
           onNewChat={onNewChat}
           onSelectRun={setSelectedRunId}
         />
         <TracePanel runId={shownRunId} />
+        <MemoryPanel refreshKey={`${latestRunId}:${chat.memoryVersion}`} />
       </main>
     </div>
   );

@@ -18,6 +18,7 @@ from app.domains.agent.runtime import AdkAgentRuntime
 from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import ModelRateLimited, ModelUnavailable
 from app.domains.gateway.service import ToolGateway
+from app.domains.memory.service import MemoryService
 from app.domains.tracing.service import TraceService
 from app.domains.workflow.service import WorkflowService
 from tests.conftest import FakeClock
@@ -82,6 +83,7 @@ async def run_turn(
         gateway,
         workflow,
         bookings,
+        MemoryService(db, clock, workflow, TraceService(db, clock)),
         max_model_calls=8,
         max_tool_calls=12,
         today=lambda: clock.now().date(),

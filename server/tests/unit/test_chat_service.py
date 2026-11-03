@@ -22,6 +22,7 @@ from app.domains.chat.service import FAILURE_REPLIES, ChatService
 from app.domains.gateway.client import ProviderClient
 from app.domains.gateway.service import DenyAllApprovals, ToolGateway
 from app.domains.jobs.service import JobService
+from app.domains.memory.service import MemoryService
 from app.domains.notifications.service import NotificationService
 from app.domains.tracing.service import RunRecorder, TraceService
 from app.domains.workflow.models import WorkflowState
@@ -33,6 +34,9 @@ class FakeRuntime:
     def __init__(self, result: str | Exception = "Which area are you in?") -> None:
         self.result = result
         self.calls: list[tuple[str, str, str]] = []
+
+    async def rotate_session(self, user_id: str, session_id: str) -> None:
+        return None
 
     async def run_turn(
         self, user_id: str, session_id: str, message: str, recorder: RunRecorder
@@ -91,6 +95,7 @@ def build(
         ),
         run_deadline_s=deadline_s,
         model_is_configured=configured,
+        memory=MemoryService(traces._db, traces._clock, workflows, traces),
     )
 
 

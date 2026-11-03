@@ -30,11 +30,19 @@ class SessionConflict(Exception):
     """Something else wrote to the session during this turn."""
 
 
+class ContextUnavailable(Exception):
+    """What the model would see could not be built within budget, or could not be logged."""
+
+
 class AgentRuntime(Protocol):
     async def run_turn(
         self, user_id: str, session_id: str, message: str, recorder: RunRecorder
     ) -> str:
         """Run one turn and return the model's reply text, which may be empty."""
+        ...
+
+    async def rotate_session(self, user_id: str, session_id: str) -> None:
+        """Delete the session's stored log. The caller holds the turn lock."""
         ...
 
 

@@ -1,6 +1,7 @@
 """Records runs. A trace write failure must never change a user's outcome."""
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -8,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.core.clock import Clock
 from app.core.database import Database
+from app.core.redaction import scrub_text, scrub_value
 from app.domains.tracing.models import TraceEvent
 from app.domains.tracing.pricing import estimate_cost_usd
 from app.domains.tracing.repository import TraceRepository
@@ -147,6 +149,16 @@ class TraceService:
                 )
         except (SQLAlchemyError, OSError):
             logger.exception("could not finish run %s", recorder.run_id)
+
+    async def scrub_user(self, user_id: str, pattern: re.Pattern[str]) -> None:
+        """A forgotten fact must not stay readable in old traces."""
+        async with self._db.session_scope() as session:
+            repository = TraceRepository(session)
+            for run in await repository.runs_for_user(user_id):
+                if run.reply:
+                    run.reply = scrub_text(run.reply, pattern)
+                for event in await repository.list_events(run.id):
+                    event.data = scrub_value(event.data, pattern)
 
     async def get_trace(self, run_id: uuid.UUID) -> RunTraceRead:
         async with self._db.session_scope() as session:

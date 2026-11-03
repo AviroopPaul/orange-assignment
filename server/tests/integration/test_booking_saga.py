@@ -29,6 +29,7 @@ from app.domains.gateway.schemas import Caller
 from app.domains.gateway.service import CallContext, ToolBudget
 from app.domains.jobs.broker import build_broker
 from app.domains.jobs.models import OutboxJob
+from app.domains.workflow.repository import WorkflowRepository
 from mock_provider import catalog
 from mock_provider.catalog import CATALOG
 from mock_provider.migrate import main as migrate_mock
@@ -107,12 +108,12 @@ class Rig:
         args = await workflows.begin_search(self.user, self.session, recorder)
         found = await self.core.gateway.call("search_providers", args, context)
         assert found.ok, found
-        listed = await workflows.finish_search(
-            self.user, self.session, found.data["providers"], recorder
-        )
-        provider = next(item for item in listed["providers"] if item["id"].endswith("-01"))
+        await workflows.finish_search(self.user, self.session, found.data["providers"], recorder)
+        async with self.core.db.session_scope() as scope:
+            workflow = await WorkflowRepository(scope).get_active(self.user, self.session)
+        provider_id = next(key for key in workflow.shortlist if key.endswith("-01"))
         result = await self.core.approvals.propose_booking(
-            self.session, provider["id"], provider["slots"][0], context
+            self.session, provider_id, workflow.shortlist[provider_id]["slots"][0], context
         )
         assert result.get("card_shown_to_user"), result
         view = await self.core.approvals.view(self.user, self.session)

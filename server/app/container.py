@@ -20,6 +20,7 @@ from app.domains.gateway.client import ProviderClient
 from app.domains.gateway.service import ApprovalVerifier, ToolGateway
 from app.domains.jobs.broker import TaskiqJobPublisher
 from app.domains.jobs.service import JobHandler, JobPublisher, JobService
+from app.domains.memory.service import MemoryService
 from app.domains.notifications.service import NotificationService
 from app.domains.system.service import PING_JOB, SystemService, handle_ping
 from app.domains.tracing.service import TraceService
@@ -46,6 +47,7 @@ class Core:
     notifications: NotificationService
     approvals: ApprovalService
     saga: BookingSaga
+    memory: MemoryService
 
     async def close(self) -> None:
         await self.provider_client.close()
@@ -120,6 +122,7 @@ def build_core(
         jobs,
         settings.job_lease_s,
     )
+    memory = MemoryService(db, clock, workflows, traces)
     jobs.register(BOOK_JOB, saga.run_job)
     jobs.add_sweeper(saga.recover)
     return Core(
@@ -137,6 +140,7 @@ def build_core(
         notifications,
         approval_service,
         saga,
+        memory,
     )
 
 
@@ -158,9 +162,11 @@ def build_api_container(
         gateway=core.gateway,
         workflow=core.workflows,
         bookings=core.approvals,
+        memory=core.memory,
         max_model_calls=settings.max_model_calls,
         max_tool_calls=settings.max_tool_calls,
         today=lambda: core.clock.now().astimezone(LOCAL_TZ).date(),
+        context_budget=settings.context_budget_tokens,
         request_config=build_request_config(settings),
     )
     chat = ChatService(
@@ -173,5 +179,6 @@ def build_api_container(
         bookings=core.approvals,
         run_deadline_s=settings.run_deadline_s,
         model_is_configured=settings.model_is_configured,
+        memory=core.memory,
     )
     return ApiContainer(core, chat, core.traces, broker)

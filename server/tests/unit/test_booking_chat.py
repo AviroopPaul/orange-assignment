@@ -160,6 +160,27 @@ async def test_a_typed_no_closes_the_card_without_the_model(flow: Flow) -> None:
     assert (await flow.approvals())[0].status == ApprovalStatus.REJECTED.value
 
 
+async def test_a_typed_answer_on_a_card_is_in_the_next_history(flow: Flow) -> None:
+    await flow.show_card()
+    declined = await flow.say("No thanks", "The model must not run.")
+    await flow.say("What now?", "Tell me what to change.")
+
+    seen = str(flow.model.requests[0].contents)
+    assert "No thanks" in seen
+    assert declined.reply in seen
+
+
+async def test_a_yes_goes_to_the_open_card_before_a_memory_question(flow: Flow) -> None:
+    await flow.show_card()
+    memory = flow.core.memory
+    await memory.propose(USER, SESSION, "language", "Bengali", "a review said so", "all")
+
+    await flow.say("yes", "The model must not run.")
+
+    assert (await flow.approvals())[0].status == ApprovalStatus.CONSUMED.value
+    assert not (await memory.list_all(USER))[0].confirmed
+
+
 async def test_yes_with_a_change_goes_to_the_model_and_approves_nothing(flow: Flow) -> None:
     await flow.show_card()
     response = await flow.say(

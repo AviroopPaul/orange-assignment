@@ -36,6 +36,10 @@ class TraceRepository:
     async def get_run(self, run_id: uuid.UUID) -> Run | None:
         return await self._session.get(Run, run_id)
 
+    async def runs_for_user(self, user_id: str) -> Sequence[Run]:
+        result = await self._session.scalars(select(Run).where(Run.user_id == user_id))
+        return result.all()
+
     async def list_events(self, run_id: uuid.UUID) -> Sequence[TraceEvent]:
         result = await self._session.scalars(
             select(TraceEvent).where(TraceEvent.run_id == run_id).order_by(TraceEvent.seq)

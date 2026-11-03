@@ -31,6 +31,7 @@ source_modules =
     app.domains.chat
     app.domains.gateway
     app.domains.jobs
+    app.domains.memory
     app.domains.notifications
     app.domains.system
     app.domains.tracing
@@ -47,6 +48,7 @@ forbidden_modules =
     app.domains.agent
     app.domains.bookings
     app.domains.chat
+    app.domains.memory
     app.domains.notifications
     app.domains.system
     app.domains.jobs
@@ -61,6 +63,7 @@ forbidden_modules =
     app.domains.bookings
     app.domains.chat
     app.domains.gateway
+    app.domains.memory
     app.domains.notifications
     app.domains.system
     app.domains.tracing
@@ -73,4 +76,21 @@ source_modules =
     app.domains.notifications
 forbidden_modules =
     app.domains.agent
+    app.domains.chat
+    app.domains.memory
+
+[importlinter:contract:memory-is-below-chat]
+name = memory stays below the model, except its router, which only calls ChatService
+type = forbidden
+source_modules =
+    app.domains.memory.assembler
+    app.domains.memory.models
+    app.domains.memory.repository
+    app.domains.memory.rules
+    app.domains.memory.schemas
+    app.domains.memory.seed
+    app.domains.memory.service
+forbidden_modules =
+    app.domains.agent
+    app.domains.bookings
     app.domains.chat

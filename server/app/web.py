@@ -15,6 +15,10 @@ def get_notification_service(request: Request):
     return request.app.state.container.core.notifications
 
 
+def get_memory_service(request: Request):
+    return request.app.state.container.core.memory
+
+
 def get_trace_service(request: Request):
     return request.app.state.container.traces
 

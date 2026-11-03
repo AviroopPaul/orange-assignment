@@ -13,6 +13,8 @@ class RequestSnapshot(BaseModel):
     missing_required: list[str]
     optional_unset: list[str]
     dates_to_show: dict[str, Any] | None = None
+    # The last search, only while it still applies.
+    shortlist: dict[str, Any] = {}
 
     def for_prompt(self) -> str:
         saved = ", ".join(f"{name}={value}" for name, value in self.details.items()) or "nothing"

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from math import ceil
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -12,6 +13,7 @@ from app.domains.bookings.schemas import ApprovalCard, ApprovalDecision
 from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import (
     AgentRuntime,
+    ContextUnavailable,
     ModelCallLimitExceeded,
     ModelRateLimited,
     ModelUnavailable,
@@ -20,6 +22,8 @@ from app.domains.chat.ports import (
     TurnLock,
 )
 from app.domains.chat.schemas import ChatRequest, ChatResponse, FailureReason, Outcome
+from app.domains.memory.schemas import ChatMemoryNotes
+from app.domains.memory.service import ASSISTANT, USER, MemoryService
 from app.domains.tracing.service import RunRecorder, TraceService
 from app.domains.workflow.schemas import RequestSnapshot
 from app.domains.workflow.service import WorkflowService
@@ -83,11 +87,22 @@ FAILURE_REPLIES: dict[FailureReason, tuple[Outcome, str]] = {
         "A part of the service is down, so I can't safely process messages. "
         f"{NO_CHANGE} Please try again shortly.",
     ),
+    FailureReason.CONTEXT_UNAVAILABLE: (
+        Outcome.TOOL_FAILED,
+        f"I couldn't safely prepare this request for the AI model. {NO_CHANGE} Please try again.",
+    ),
     FailureReason.UNEXPECTED_ERROR: (
         Outcome.TOOL_FAILED,
         f"Something went wrong on my side. {NO_CHANGE} Please try again.",
     ),
 }
+
+
+@dataclass
+class _TurnNotes:
+    """Whether the user's message reached the chat history, so its reply belongs there too."""
+
+    recorded: bool = False
 
 
 class ChatService:
@@ -100,6 +115,7 @@ class ChatService:
         bookings: ApprovalService,
         run_deadline_s: float,
         model_is_configured: bool,
+        memory: MemoryService,
     ) -> None:
         self._runtime = runtime
         self._turn_lock = turn_lock
@@ -108,13 +124,15 @@ class ChatService:
         self._bookings = bookings
         self._run_deadline_s = run_deadline_s
         self._model_is_configured = model_is_configured
+        self._memory = memory
 
     async def handle_message(self, request: ChatRequest) -> ChatResponse:
         session_id = request.session_id or uuid.uuid4().hex
         recorder = await self._traces.start_run(request.user_id, session_id)
 
         card: ApprovalCard | None = None
-        result = await self._run(request, session_id, recorder)
+        notes = _TurnNotes()
+        result = await self._run(request, session_id, recorder, notes)
         if isinstance(result, ApprovalDecision):
             reply, failure, retry_after_s = result.reply, None, None
             outcome, card = Outcome(result.outcome), result.approval
@@ -146,6 +164,7 @@ class ChatService:
         await self._traces.finish_run(
             recorder, outcome.value, failure.value if failure else None, reply
         )
+        memory = await self._finish_turn_memory(request.user_id, session_id, reply, notes)
         # Last, so the saga starts writing to this run's trace only after the run is finished.
         await self._bookings.publish()
         return ChatResponse(
@@ -156,7 +175,35 @@ class ChatService:
             retry_after_s=retry_after_s,
             reply=reply,
             approval=card,
+            memory=memory,
         )
+
+    async def _finish_turn_memory(
+        self, user_id: str, session_id: str, reply: str, notes: _TurnNotes
+    ) -> ChatMemoryNotes:
+        """A reply is already decided, so a failure here must not change it."""
+        try:
+            if notes.recorded:
+                await self._memory.record_turn(user_id, session_id, ASSISTANT, reply)
+            await self.settle_memory_changes(user_id)
+            return await self._memory.take_chat_notes(user_id, session_id)
+        except (SQLAlchemyError, OSError):
+            logger.exception("could not store the reply or finish a memory change")
+            return ChatMemoryNotes()
+
+    async def settle_memory_changes(self, user_id: str) -> None:
+        """Clean the last copies of removed text. A session in use is deleted on its next turn."""
+        await self._memory.finish_scrub(user_id)
+        for session_id in await self._memory.rotations_due(user_id):
+            try:
+                async with self._turn_lock.hold(f"{user_id}:{session_id}"):
+                    await self._rotate(user_id, session_id)
+            except (TurnLockTimeout, TurnLockUnavailable):
+                logger.warning("session %s stays marked for deletion", session_id)
+
+    async def _rotate(self, user_id: str, session_id: str) -> None:
+        await self._runtime.rotate_session(user_id, session_id)
+        await self._memory.clear_rotation(user_id, session_id)
 
     async def _failure_reply(
         self,
@@ -205,7 +252,7 @@ class ChatService:
         return f"Dates: {saved['label']}.\n\n{reply}"
 
     async def _run(
-        self, request: ChatRequest, session_id: str, recorder: RunRecorder
+        self, request: ChatRequest, session_id: str, recorder: RunRecorder, notes: _TurnNotes
     ) -> tuple[str, FailureReason | None, int | None] | ApprovalDecision:
         if not self._model_is_configured:
             return "", FailureReason.MODEL_NOT_CONFIGURED, None
@@ -213,15 +260,24 @@ class ChatService:
         user_id = request.user_id
         try:
             async with self._turn_lock.hold(f"{user_id}:{session_id}"):
+                if session_id in await self._memory.rotations_due(user_id):
+                    await self._rotate(user_id, session_id)
                 await self._workflows.record_user_message(
                     user_id, session_id, request.message, recorder
                 )
+                await self._memory.record_turn(user_id, session_id, USER, request.message)
+                notes.recorded = True
                 # Read before the model runs, so nothing the model writes can count as approval.
                 decision = await self._bookings.decide_from_message(
                     user_id, session_id, request.message, recorder
                 )
                 if decision is not None:
                     return decision
+                answered = await self._memory.answer_from_message(
+                    user_id, session_id, request.message, recorder
+                )
+                if answered is not None:
+                    return answered, None, None
                 try:
                     async with asyncio.timeout(self._run_deadline_s):
                         reply = await self._runtime.run_turn(
@@ -251,6 +307,10 @@ class ChatService:
             return "", FailureReason.MODEL_UNAVAILABLE, None
         except SessionConflict:
             return "", FailureReason.SESSION_CONFLICT, None
+        except ContextUnavailable as error:
+            logger.warning("context unavailable: %s", error)
+            await recorder.event("context_unavailable", data={"error": str(error)[:500]})
+            return "", FailureReason.CONTEXT_UNAVAILABLE, None
         except Exception as error:
             logger.exception("unexpected error in run %s", recorder.run_id)
             await recorder.event("unexpected_error", data={"error": repr(error)[:500]})

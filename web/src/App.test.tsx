@@ -269,12 +269,10 @@ describe("chat", () => {
     });
   });
 
-  it("says plainly what is not connected yet", () => {
+  it("explains memory on the empty chat", () => {
     fakeApi(STATUS_OK);
     render(<App />);
-    expect(
-      screen.getByText(/Memory is not connected yet/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/remembers lasting preferences/)).toBeInTheDocument();
   });
 
   it("fills the box from an example without sending it", async () => {
@@ -778,5 +776,148 @@ describe("after a reload", () => {
     expect(
       await screen.findByText("Booked and verified with the provider.", {}, { timeout: 4000 }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("memory panel", () => {
+  const SAID = {
+    id: "m1",
+    key: "area",
+    value: "Indiranagar",
+    scope: "all",
+    source: "explicit",
+    quote: "I live in Indiranagar",
+    confirmed: true,
+    updated_at: "2026-11-02T12:00:00+00:00",
+  };
+  const GUESS = {
+    ...SAID,
+    id: "m2",
+    key: "language",
+    value: "Hindi",
+    source: "inferred",
+    confirmed: false,
+  };
+  const LIST = "GET /api/memories?user_id=demo-user";
+
+  it("shows what is known, and marks what is not used", async () => {
+    fakeApi({ ...STATUS_OK, [LIST]: () => ({ json: { memories: [SAID, GUESS] } }) });
+    render(<App />);
+
+    const panel = screen.getByRole("region", { name: "Memory" });
+    expect(await within(panel).findByText("Indiranagar")).toBeInTheDocument();
+    expect(within(panel).getByText("You said this")).toBeInTheDocument();
+    expect(within(panel).getByText("Not confirmed, not used")).toBeInTheDocument();
+    expect(within(panel).getAllByRole("button", { name: "Confirm" })).toHaveLength(1);
+  });
+
+  it("confirms, corrects and forgets through the server, then reads again", async () => {
+    const calls = fakeApi({
+      ...STATUS_OK,
+      [LIST]: () => ({ json: { memories: [SAID, GUESS] } }),
+      "POST /api/memories/m2/confirm": () => ({ json: { ...GUESS, confirmed: true } }),
+      "PUT /api/memories/m1": () => ({ json: { ...SAID, value: "Whitefield" } }),
+      "DELETE /api/memories/m1?user_id=demo-user": () => ({ json: null, status: 200 }),
+    });
+    render(<App />);
+    const panel = screen.getByRole("region", { name: "Memory" });
+    await within(panel).findByText("Indiranagar");
+
+    await userEvent.click(within(panel).getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(calls.find((call) => call.key === "POST /api/memories/m2/confirm")?.body).toEqual({
+        user_id: "demo-user",
+      }),
+    );
+    await waitFor(() => expect(calls.filter((call) => call.key === LIST)).toHaveLength(2));
+
+    await userEvent.click(within(panel).getAllByRole("button", { name: "Correct" })[0]);
+    const input = within(panel).getByLabelText("New value for area");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Whitefield");
+    await userEvent.click(within(panel).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(calls.find((call) => call.key === "PUT /api/memories/m1")?.body).toEqual({
+        user_id: "demo-user",
+        value: "Whitefield",
+      }),
+    );
+    await waitFor(() => expect(within(panel).queryByRole("button", { name: "Save" })).toBeNull());
+
+    await userEvent.click(within(panel).getAllByRole("button", { name: "Forget" })[0]);
+    await waitFor(() =>
+      expect(calls.some((call) => call.key === "DELETE /api/memories/m1?user_id=demo-user")).toBe(
+        true,
+      ),
+    );
+  });
+
+  it("reads again after a chat turn, which may have changed a memory", async () => {
+    const calls = fakeApi({
+      ...STATUS_OK,
+      [LIST]: () => ({ json: { memories: [] } }),
+      "POST /api/chat": reply("run-1", "Noted."),
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+    });
+    render(<App />);
+
+    await say("I live in Indiranagar");
+    await screen.findByText("Noted.");
+    await waitFor(() =>
+      expect(calls.filter((call) => call.key === LIST).length).toBeGreaterThanOrEqual(2),
+    );
+  });
+
+  it("shows what was saved in the chat, and asks about a guess there", async () => {
+    const calls = fakeApi({
+      ...STATUS_OK,
+      [LIST]: () => ({ json: { memories: [] } }),
+      "POST /api/chat": reply("run-1", "What do you need?", {
+        memory: { saved: [SAID], to_confirm: [GUESS] },
+      }),
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+      "POST /api/memories/m2/confirm": () => ({ json: { ...GUESS, confirmed: true } }),
+    });
+    render(<App />);
+
+    await say("I live in Indiranagar");
+    const chat = screen.getByRole("region", { name: "Chat" });
+    expect(await within(chat).findByText("Remembered area: Indiranagar")).toBeInTheDocument();
+    const question = within(chat).getByRole("region", { name: "Remember this?" });
+    expect(within(question).getByText("Hindi")).toBeInTheDocument();
+
+    const before = calls.filter((call) => call.key === LIST).length;
+    await userEvent.click(within(question).getByRole("button", { name: "Remember" }));
+
+    expect(await within(chat).findByText("Remembered language: Hindi")).toBeInTheDocument();
+    expect(within(chat).queryByRole("region", { name: "Remember this?" })).toBeNull();
+    await waitFor(() =>
+      expect(calls.filter((call) => call.key === LIST).length).toBeGreaterThan(before),
+    );
+  });
+
+  it("drops the question when the user says no, or moves on", async () => {
+    let turn = 0;
+    const calls = fakeApi({
+      ...STATUS_OK,
+      [LIST]: () => ({ json: { memories: [] } }),
+      "POST /api/chat": () => {
+        turn += 1;
+        return reply("run-1", `Reply ${turn}.`, {
+          memory: { saved: [], to_confirm: turn === 1 ? [GUESS] : [] },
+        })();
+      },
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+      "DELETE /api/memories/m2?user_id=demo-user": () => ({ json: null }),
+    });
+    render(<App />);
+    const chat = screen.getByRole("region", { name: "Chat" });
+
+    await say("first");
+    await within(chat).findByRole("region", { name: "Remember this?" });
+    await say("second");
+    await within(chat).findByText("Reply 2.");
+    expect(within(chat).queryByRole("region", { name: "Remember this?" })).toBeNull();
+    expect(calls.some((call) => call.key.startsWith("DELETE"))).toBe(false);
   });
 });

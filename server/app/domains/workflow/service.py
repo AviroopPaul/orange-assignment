@@ -1,6 +1,7 @@
 """The errand's state and details. Only code moves the state, and every move is traced."""
 
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import LOCAL_TZ, Clock
 from app.core.database import Database
+from app.core.redaction import scrub_text, scrub_value
 from app.domains.gateway.schemas import RefusalReason
 from app.domains.tracing.service import RunRecorder
 from app.domains.workflow import dates
 from app.domains.workflow import request as details
-from app.domains.workflow.filters import apply_hard_limits, build_shortlist
+from app.domains.workflow.filters import apply_hard_limits, build_shortlist, open_days
 from app.domains.workflow.models import Workflow, WorkflowState
 from app.domains.workflow.repository import WorkflowRepository
 from app.domains.workflow.schemas import RequestSnapshot
@@ -103,18 +105,57 @@ def _read_phrase(phrase: str, user_text: str, today: date) -> dates.ResolvedDate
     if not dates.is_grounded(phrase, user_text):
         return {
             "error": "date_not_stated",
-            "message": "The user has not said this. Ask them which dates they want.",
+            "message": "Those are not the user's words. Send only words they used. If they gave "
+            "no day, ask which day they want. Never ask for a calendar date: this tool works it "
+            'out from words such as "Thursday next week".',
         }
     resolved = dates.resolve_phrase(phrase, today)
     if resolved is None:
         return {
             "error": "date_not_understood",
-            "message": "Ask the user for a specific day or date.",
+            "message": 'Ask for a day in plain words, such as "Thursday" or "next week". '
+            "They need not give a calendar date: this tool works it out.",
         }
     problem = dates.problem_with(resolved, today)
     if problem:
         return {"error": "date_not_usable", "message": problem}
     return resolved
+
+
+def _slot_refusal(provider_id: str, provider: dict[str, Any], slot: str) -> dict[str, Any]:
+    """Says what is really open, so the model has no need to guess."""
+    refusal = {
+        "error": "slot_not_in_results",
+        "message": "That slot is not open within the user's limits. Offer only what is listed "
+        "here, and nothing else.",
+        "open_days": open_days(provider["slots"]),
+    }
+    try:
+        day = datetime.fromisoformat(slot)
+    except ValueError:
+        return refusal
+    local = day if day.tzinfo is None else day.astimezone(LOCAL_TZ)
+    return refusal | {"open_that_day": _on_day(provider_id, provider, local.date())["slots"]}
+
+
+def _on_day(provider_id: str, provider: dict[str, Any], day: date) -> dict[str, Any]:
+    """What one provider has open on one day, from the last search and nothing else."""
+    slots = [
+        slot
+        for slot in provider["slots"]
+        if datetime.fromisoformat(slot).astimezone(LOCAL_TZ).date() == day
+    ]
+    found: dict[str, Any] = {
+        "provider_id": provider_id,
+        "provider": provider["name"],
+        "day": f"{day:%A} {dates.display(day)}",
+        # Each one is a date and a time, ready for propose_booking.
+        "slots": [slot[:16] for slot in slots],
+    }
+    if not slots:
+        found["open_days"] = open_days(provider["slots"])
+        found["message"] = "Nothing is open that day. Tell the user, and offer only these days."
+    return found
 
 
 class WorkflowService:
@@ -252,8 +293,17 @@ class WorkflowService:
             if isinstance(resolved, dict):
                 return _Change(result=resolved)
 
-            start, end = resolved.start.isoformat(), resolved.end.isoformat()
             request = workflow.request
+            saved_start = details.field_value(request, "start_date")
+            saved_end = details.field_value(request, "end_date")
+            if saved_start and saved_end:
+                resolved = (
+                    dates.narrowed_to_saved(
+                        phrase, date.fromisoformat(saved_start), date.fromisoformat(saved_end)
+                    )
+                    or resolved
+                )
+            start, end = resolved.start.isoformat(), resolved.end.isoformat()
             if (
                 details.field_value(request, "start_date") == start
                 and details.field_value(request, "end_date") == end
@@ -320,6 +370,7 @@ class WorkflowService:
             missing_required=details.missing_required(request),
             optional_unset=details.optional_unset(request),
             dates_to_show=request.get(DATES_TO_SHOW),
+            shortlist=workflow.shortlist if workflow and state in _REOPENED_BY_A_CHANGE else {},
         )
 
     async def update_request(
@@ -329,8 +380,12 @@ class WorkflowService:
         changes: dict[str, Any],
         clear_fields: list[str] | None = None,
         recorder: RunRecorder | None = None,
+        remembered: str = "",
     ) -> dict[str, Any]:
-        """Merge details one field at a time. Everything not named here stays as it was."""
+        """Merge details one field at a time. Everything not named here stays as it was.
+
+        `remembered` is what the user stated or confirmed earlier, so it counts as theirs.
+        """
         now = self._clock.now()
 
         def decide(workflow: Workflow) -> _Change:
@@ -339,6 +394,7 @@ class WorkflowService:
             merged = dict(workflow.request)
             rejected: dict[str, str] = {}
             changed: set[str] = set()
+            from_memory: list[str] = []
 
             for name in clear_fields or []:
                 if name in details.OPTIONAL_DETAILS and name in merged:
@@ -351,13 +407,17 @@ class WorkflowService:
 
             for name, value in changes.items():
                 problem = details.rejection(name, value, workflow.user_text)
-                if problem:
+                if problem and details.rejection(name, value, remembered):
                     rejected[name] = problem
                     continue
                 if details.field_value(merged, name) != value:
+                    source = "user"
+                    if problem or details.only_remembered(value, workflow.user_text, remembered):
+                        source = "memory"
+                        from_memory.append(name)
                     merged[name] = {
                         "value": value,
-                        "source": "user",
+                        "source": source,
                         "updated_at": now.isoformat(),
                     }
                     changed.add(name)
@@ -389,9 +449,35 @@ class WorkflowService:
             }
             if rejected:
                 result["rejected"] = rejected
-            return _Change(state=next_state, request=merged, result=result)
+            events = [("filled_from_memory", {"fields": from_memory})] if from_memory else []
+            return _Change(state=next_state, request=merged, result=result, events=events)
 
         return (await self._apply(user_id, session_id, decide, recorder)).result
+
+    async def scrub_user(self, user_id: str, pattern: re.Pattern[str]) -> None:
+        """A removed fact must leave the user's stored words and any errand that used it."""
+
+        def decide(workflow: Workflow) -> _Change:
+            kept = {}
+            removed = set()
+            for name, entry in workflow.request.items():
+                if name in details.ALL_FIELDS and isinstance(entry, dict):
+                    value = entry.get("value")
+                    if scrub_value(value, pattern) != value:
+                        removed.add(name)
+                        continue
+                kept[name] = entry
+            state = None
+            if WorkflowState(workflow.state) in _REOPENED_BY_A_CHANGE and removed & _SEARCH_INPUTS:
+                state = WorkflowState.INTAKE
+            return _Change(
+                state=state, request=kept, user_text=scrub_text(workflow.user_text, pattern)
+            )
+
+        async with self._db.session_scope() as session:
+            session_ids = await WorkflowRepository(session).active_session_ids(user_id)
+        for session_id in session_ids:
+            await self._apply(user_id, session_id, decide, None)
 
     async def begin_search(
         self, user_id: str, session_id: str, recorder: RunRecorder | None = None
@@ -451,7 +537,7 @@ class WorkflowService:
 
     async def proposal_target(
         self, user_id: str, session_id: str, provider_id: str, slot: str
-    ) -> ProposalTarget | dict[str, str]:
+    ) -> ProposalTarget | dict[str, Any]:
         """The model may only propose what the last search returned. Returns why not, otherwise."""
         async with self._db.session_scope() as session:
             workflow = await WorkflowRepository(session).get_active(user_id, session_id)
@@ -471,10 +557,7 @@ class WorkflowService:
             }
         match = next((item for item in provider["slots"] if same_time(item, slot)), None)
         if match is None:
-            return {
-                "error": "slot_not_in_results",
-                "message": "That slot is not open within the user's limits. Choose a listed slot.",
-            }
+            return _slot_refusal(provider_id, provider, slot)
         return ProposalTarget(
             workflow_id=workflow.id,
             provider_id=provider_id,
@@ -483,6 +566,41 @@ class WorkflowService:
             slot=match,
             max_budget=details.field_value(workflow.request, "max_budget"),
         )
+
+    async def open_slots(
+        self, user_id: str, session_id: str, provider_id: str, day: str
+    ) -> dict[str, Any]:
+        """One provider's times on one day. The contract's search cannot ask for this, so the
+        answer comes from what it last returned. A hold still checks the slot with the provider."""
+        async with self._db.session_scope() as session:
+            workflow = await WorkflowRepository(session).get_active(user_id, session_id)
+        state = WorkflowState(workflow.state) if workflow else WorkflowState.INTAKE
+        if workflow is None or state not in _REOPENED_BY_A_CHANGE:
+            return {
+                "error": "search_first",
+                "message": "Search with the user's current details first.",
+            }
+        provider = workflow.shortlist.get(provider_id)
+        if provider is None:
+            return {
+                "error": "provider_not_in_results",
+                "message": "That provider is not in the latest results. Choose one that is.",
+            }
+        start = date.fromisoformat(details.field_value(workflow.request, "start_date"))
+        end = date.fromisoformat(details.field_value(workflow.request, "end_date"))
+        chosen = dates.one_day(day, start, end, self._today())
+        if chosen is None:
+            return {
+                "error": "day_not_understood",
+                "message": 'Send one day, such as "2026-11-10" or "Tuesday".',
+            }
+        if not start <= chosen <= end:
+            return {
+                "error": "outside_search_dates",
+                "message": f"The search covered {dates.display(start)} to {dates.display(end)}. If "
+                "the user wants this day, call resolve_dates with their words, then search.",
+            }
+        return _on_day(provider_id, provider, chosen)
 
     async def state_in(self, session: AsyncSession, workflow_id: uuid.UUID) -> WorkflowState | None:
         """Locks the row, so a decision in the caller's transaction cannot race a change."""

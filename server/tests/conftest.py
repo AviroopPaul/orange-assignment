@@ -19,6 +19,8 @@ from app.domains.gateway.client import ProviderClient
 from app.domains.gateway.service import DenyAllApprovals, ToolGateway
 from app.domains.jobs import models as job_models  # noqa: F401
 from app.domains.jobs.service import JobService
+from app.domains.memory import models as memory_models  # noqa: F401
+from app.domains.memory.service import MemoryService
 from app.domains.notifications import models as notification_models  # noqa: F401
 from app.domains.notifications.service import NotificationService
 from app.domains.tracing import models as tracing_models  # noqa: F401
@@ -139,6 +141,11 @@ def jobs(db: Database, clock: FakeClock, publisher: RecordingPublisher) -> JobSe
 @pytest.fixture
 def notifications(db: Database, clock: FakeClock) -> NotificationService:
     return NotificationService(db, clock)
+
+
+@pytest.fixture
+def memory(db: Database, clock: FakeClock, workflow: WorkflowService) -> MemoryService:
+    return MemoryService(db, clock, workflow, TraceService(db, clock))
 
 
 @pytest.fixture

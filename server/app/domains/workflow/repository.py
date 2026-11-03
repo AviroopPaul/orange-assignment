@@ -26,6 +26,14 @@ class WorkflowRepository:
         # Writers queue on the row for a moment, so concurrent updates do not collide.
         return await self._session.scalar(query.with_for_update() if lock else query)
 
+    async def active_session_ids(self, user_id: str) -> list[str]:
+        result = await self._session.scalars(
+            select(Workflow.session_id).where(
+                Workflow.user_id == user_id, Workflow.state.not_in(_CLOSED)
+            )
+        )
+        return list(result.all())
+
     async def get_by_id(self, workflow_id: uuid.UUID, lock: bool = False) -> Workflow | None:
         query = (
             select(Workflow)

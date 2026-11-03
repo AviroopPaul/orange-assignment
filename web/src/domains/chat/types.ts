@@ -1,3 +1,5 @@
+import type { MemoryItem } from "../memory/types";
+
 export type Outcome =
   | "done"
   | "needs_input"
@@ -50,6 +52,7 @@ export interface ChatResponse {
   reason: string | null;
   reply: string;
   approval?: ApprovalCard | null;
+  memory?: { saved: MemoryItem[]; to_confirm: MemoryItem[] };
 }
 
 export type MessageRole = "user" | "agent" | "error";
@@ -64,4 +67,7 @@ export interface ChatMessage {
   approval?: ApprovalCard;
   // A card can be answered only while it is the latest question.
   approvalOpen?: boolean;
+  memorySaved?: MemoryItem[];
+  // Shown only until the user's next message, like the server's own question.
+  memoryQuestions?: MemoryItem[];
 }

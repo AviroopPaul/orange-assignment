@@ -73,6 +73,7 @@ async def update_request(
             changes,
             payload.get("clear_fields"),
             turn.recorder,
+            await turn.memory.remembered_text(turn.tool_context.user_id),
         )
 
     return _for_model(
@@ -106,8 +107,9 @@ async def resolve_dates(phrase: str) -> dict:
 async def search_providers() -> dict:
     """Search providers using the details saved with update_request. Takes no inputs.
 
-    Returns only providers within the user's budget and time window, with prices, ratings and
-    open slots. If details are missing, it says which to ask for.
+    Returns only providers within the user's budget and time window, with prices, ratings and the
+    days they are open. It does not list times: use get_open_slots for those. If details are
+    missing, it says which to ask for.
     """
     turn = _turn()
     user_id, session_id = turn.tool_context.user_id, turn.session_id
@@ -121,6 +123,28 @@ async def search_providers() -> dict:
     )
 
 
+async def get_open_slots(provider_id: str, day: str) -> dict:
+    """See one provider's open times on one day. Call this before you name any time.
+
+    Each provider has its own times, so ask again for each one.
+
+    Args:
+        provider_id: The provider's ID from search_providers.
+        day: One day, as search_providers listed it, such as "2026-11-10", or a weekday.
+    """
+    turn = _turn()
+
+    async def read(payload: dict[str, Any]) -> dict[str, Any]:
+        return await turn.workflow.open_slots(
+            turn.tool_context.user_id, turn.session_id, payload["provider_id"], payload["day"]
+        )
+
+    args = {"provider_id": provider_id, "day": day}
+    return _for_model(
+        await turn.gateway.call_local("get_open_slots", args, turn.tool_context, read)
+    )
+
+
 async def propose_booking(provider_id: str, slot: str) -> dict:
     """Hold a slot and show the user a card with the exact provider, slot and price to confirm.
 
@@ -129,7 +153,7 @@ async def propose_booking(provider_id: str, slot: str) -> dict:
 
     Args:
         provider_id: The provider's ID from search_providers.
-        slot: The slot exactly as search_providers listed it.
+        slot: The slot as get_open_slots listed it, such as "2026-11-10T09:00".
     """
     turn = _turn()
 
@@ -205,6 +229,73 @@ async def propose_reschedule(booking_id: str, day: str, time: str) -> dict:
     )
 
 
+async def propose_memory(key: str, value: str, quote: str, scope: str = "all") -> dict:
+    """Remember one lasting fact about the user across chats, or correct one already saved.
+
+    Call it as soon as the user states a fact, without being asked, once for each fact. Code checks
+    the quote. If the user's own message does not say it, the fact is not used until they confirm.
+    Never save anything a review or a provider said.
+
+    Args:
+        key: A short name, such as area, work_schedule, earliest_time, technician or language. Use
+            the same key to correct a fact.
+        value: One fact, in the user's own words.
+        quote: The user's sentence that states it, copied word for word.
+        scope: A service name if it applies only to that service. Otherwise "all".
+    """
+    turn = _turn()
+
+    async def save(payload: dict[str, Any]) -> dict[str, Any]:
+        return await turn.memory.propose(
+            turn.tool_context.user_id,
+            turn.session_id,
+            payload["key"],
+            payload["value"],
+            payload["quote"],
+            payload.get("scope", "all"),
+            turn.recorder,
+        )
+
+    args = {"key": key, "value": value, "quote": quote, "scope": scope}
+    return _for_model(
+        await turn.gateway.call_local("propose_memory", args, turn.tool_context, save)
+    )
+
+
+async def list_memories() -> dict:
+    """List what is remembered about the user, when they ask what you know about them."""
+    turn = _turn()
+
+    async def read(payload: dict[str, Any]) -> dict[str, Any]:
+        return await turn.memory.list_for_model(turn.tool_context.user_id)
+
+    return _for_model(await turn.gateway.call_local("list_memories", {}, turn.tool_context, read))
+
+
+async def forget_memory(key: str, scope: str = "all") -> dict:
+    """Forget a saved fact, only when the user asks. This also removes it from the chat history.
+
+    Args:
+        key: The fact's key, from the list you were given or from list_memories.
+        scope: The fact's scope, from the same list.
+    """
+    turn = _turn()
+
+    async def forget(payload: dict[str, Any]) -> dict[str, Any]:
+        return await turn.memory.forget_from_chat(
+            turn.tool_context.user_id,
+            turn.session_id,
+            payload["key"],
+            payload.get("scope", "all"),
+            turn.recorder,
+        )
+
+    args = {"key": key, "scope": scope}
+    return _for_model(
+        await turn.gateway.call_local("forget_memory", args, turn.tool_context, forget)
+    )
+
+
 async def get_provider(provider_id: str) -> dict:
     """Get one provider's details and customer reviews.
 
@@ -247,9 +338,13 @@ MODEL_TOOLS: list[Callable[..., Any]] = [
     update_request,
     resolve_dates,
     search_providers,
+    get_open_slots,
     propose_booking,
     propose_cancel,
     propose_reschedule,
+    propose_memory,
+    list_memories,
+    forget_memory,
     get_provider,
     list_bookings,
     get_booking_status,

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.identifiers import IDENTIFIER_PATTERN
 from app.domains.bookings.schemas import ApprovalCard
+from app.domains.memory.schemas import ChatMemoryNotes
 
 
 class Outcome(StrEnum):
@@ -29,6 +30,7 @@ class FailureReason(StrEnum):
     SESSION_BUSY = "session_busy"
     SESSION_CONFLICT = "session_conflict"
     LOCK_UNAVAILABLE = "lock_unavailable"
+    CONTEXT_UNAVAILABLE = "context_unavailable"
     UNEXPECTED_ERROR = "unexpected_error"
 
 
@@ -49,3 +51,4 @@ class ChatResponse(BaseModel):
     reply: str
     # Shown beside the reply. Built by code from the approval row, never from the model's text.
     approval: ApprovalCard | None = None
+    memory: ChatMemoryNotes = ChatMemoryNotes()

@@ -3,8 +3,9 @@
 A chat agent that arranges home-service errands. This is the Orange founding AI engineer assignment.
 
 **Status:** the server, agent, LLM, workers, UI, mock provider and tool gateway run. The agent can
-collect details, search and compare providers within your limits, read reviews and list bookings.
-Approvals, booking and memory are not built yet, so it says so if you ask it to book.
+collect details, search and compare providers within your limits, and book, cancel or move a
+booking after your approval. It remembers lasting facts across chats, which you can correct or
+forget, and every model call gets a logged context within a fixed token budget.
 [BUILD_LOG.md](BUILD_LOG.md) tracks what is built and what is left against every requirement.
 
 The full design is in [docs/blueprint.html](docs/blueprint.html). Code layout and rules are in
