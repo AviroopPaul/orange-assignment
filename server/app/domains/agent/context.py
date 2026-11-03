@@ -11,12 +11,19 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.domains.agent.prompts import render_system_prompt
 from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import ContextUnavailable
-from app.domains.memory.assembler import ContextInputs, ContextOverBudget, Turn, assemble
-from app.domains.memory.service import USER, MemoryService
+from app.domains.memory.assembler import (
+    ContextInputs,
+    ContextOverBudget,
+    Turn,
+    assemble,
+    with_updates,
+)
+from app.domains.memory.service import ASSISTANT, USER, MemoryService
 from app.domains.tracing.service import RunRecorder
 from app.domains.workflow.service import WorkflowService
 
 _SUMMARY_UPDATES = 5
+_UPDATES_IN_HISTORY = 10
 
 
 def _current_run(contents: list[types.Content]) -> list[types.Content]:
@@ -65,6 +72,10 @@ async def apply_context(
         # The user's message arrives through `tail`, but its stored copy is the one kept clean.
         if turns and turns[-1].role == USER:
             message = turns.pop().text
+        # Workers cannot write to the chat, and without their news the last thing the model reads
+        # can be its own "please confirm" for a booking that has since been made.
+        updates = await bookings.updates_with_times(user_id, session_id, _UPDATES_IN_HISTORY)
+        turns = with_updates(turns, [Turn(ASSISTANT, text, at) for text, at in updates])
         request_text = snapshot.for_prompt()
         assembled = assemble(
             ContextInputs(

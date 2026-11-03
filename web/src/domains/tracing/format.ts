@@ -48,6 +48,8 @@ const KIND_LABELS: Record<string, string> = {
   booking_rescheduled: "Booking moved",
   reschedule_conflict: "Slot conflict",
   change_failed: "Change failed",
+  provider_cancel_detected: "Provider cancelled",
+  replacement_decision: "Replacement decision",
   false_claim_blocked: "False claim blocked",
   model_rate_limited: "Rate limited",
   unexpected_error: "Unexpected error",

@@ -8,6 +8,7 @@ class NotificationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    session_id: str
     kind: str
     text: str
     data: dict[str, Any]

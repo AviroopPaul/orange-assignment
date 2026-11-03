@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.core.database import Database
 from app.core.heartbeats import Heartbeats
 from app.core.locks import RedisTurnLock
+from app.core.wakeups import Wakeups
 from app.domains.bookings.saga import BookingSaga
 from app.domains.bookings.service import BOOK_JOB, ApprovalService
 from app.domains.bookings.verification import BookingApprovalVerifier
@@ -22,7 +23,9 @@ from app.domains.jobs.broker import TaskiqJobPublisher
 from app.domains.jobs.service import JobHandler, JobPublisher, JobService
 from app.domains.memory.service import MemoryService
 from app.domains.notifications.service import NotificationService
+from app.domains.proactive.service import ProactiveService
 from app.domains.system.service import PING_JOB, SystemService, handle_ping
+from app.domains.tracing.jsonl import JsonlTraceFiles
 from app.domains.tracing.service import TraceService
 from app.domains.workflow.service import WorkflowService
 
@@ -48,6 +51,8 @@ class Core:
     approvals: ApprovalService
     saga: BookingSaga
     memory: MemoryService
+    turn_lock: RedisTurnLock
+    proactive: ProactiveService
 
     async def close(self) -> None:
         await self.provider_client.close()
@@ -107,9 +112,15 @@ def build_core(
     system = SystemService(
         db, redis, heartbeats, jobs, gateway.is_provider_reachable, settings.model_is_configured
     )
-    traces = TraceService(db, clock)
+    trace_files = (
+        JsonlTraceFiles(settings.trace_dir, settings.process_name) if settings.trace_dir else None
+    )
+    traces = TraceService(db, clock, trace_files)
     workflows = WorkflowService(db, clock)
-    notifications = NotificationService(db, clock)
+    notifications = NotificationService(db, clock, Wakeups(redis))
+    turn_lock = RedisTurnLock(
+        redis, ttl_s=settings.turn_lock_ttl_s, wait_s=settings.turn_lock_wait_s
+    )
     approval_service = ApprovalService(db, clock, gateway, workflows, jobs, traces, notifications)
     saga = BookingSaga(
         db,
@@ -125,6 +136,17 @@ def build_core(
     memory = MemoryService(db, clock, workflows, traces)
     jobs.register(BOOK_JOB, saga.run_job)
     jobs.add_sweeper(saga.recover)
+    proactive = ProactiveService(
+        db,
+        clock,
+        gateway,
+        approval_service,
+        workflows,
+        notifications,
+        traces,
+        turn_lock,
+        settings.job_time_limit_s,
+    )
     return Core(
         settings,
         db,
@@ -141,6 +163,8 @@ def build_core(
         approval_service,
         saga,
         memory,
+        turn_lock,
+        proactive,
     )
 
 
@@ -171,9 +195,7 @@ def build_api_container(
     )
     chat = ChatService(
         runtime=runtime,
-        turn_lock=RedisTurnLock(
-            core.redis, ttl_s=settings.turn_lock_ttl_s, wait_s=settings.turn_lock_wait_s
-        ),
+        turn_lock=core.turn_lock,
         traces=core.traces,
         workflows=core.workflows,
         bookings=core.approvals,

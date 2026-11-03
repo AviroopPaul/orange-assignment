@@ -18,6 +18,8 @@ _VERIFIED = (
     AttemptStatus.RESCHEDULED.value,
 )
 
+_KEEPS_A_BOOKING = (AttemptStatus.BOOKED.value, AttemptStatus.RESCHEDULED.value)
+
 
 class BookingRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -178,6 +180,36 @@ class BookingRepository:
             .values(status=status.value, lease_until=None, updated_at=now, **values)
         )
         return cast(CursorResult, result).rowcount > 0
+
+    async def users_with_bookings(self) -> Sequence[str]:
+        rows = await self._session.scalars(
+            select(BookingAttempt.user_id)
+            .where(
+                BookingAttempt.status.in_(_KEEPS_A_BOOKING),
+                BookingAttempt.booking_id.is_not(None),
+            )
+            .distinct()
+        )
+        return rows.all()
+
+    async def attempts_with_bookings(self, user_id: str) -> Sequence[BookingAttempt]:
+        """Oldest first, so a booking's first row is the one that made it."""
+        rows = await self._session.scalars(
+            select(BookingAttempt)
+            .where(
+                BookingAttempt.user_id == user_id,
+                BookingAttempt.status.in_(_KEEPS_A_BOOKING),
+                BookingAttempt.booking_id.is_not(None),
+            )
+            .order_by(BookingAttempt.created_at)
+        )
+        return rows.all()
+
+    async def pending_for_booking(self, booking_id: str) -> Sequence[Approval]:
+        rows = await self._session.scalars(
+            select(Approval).where(Approval.booking_id == booking_id, Approval.status == _PENDING)
+        )
+        return rows.all()
 
     async def attempts_to_requeue(
         self, now: datetime, lease: timedelta, limit: int = 100

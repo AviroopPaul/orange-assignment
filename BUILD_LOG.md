@@ -15,13 +15,13 @@ Last updated: 3 Nov 2026.
 
 | Area | Done | Partial | Not started | Total |
 |---|---|---|---|---|
-| Functional requirements | 12 | 1 | 1 | 14 |
-| Non-functional requirements | 11 | 9 | 0 | 20 |
-| Eval scenarios | 0 | 33 | 3 | 36 |
+| Functional requirements | 13 | 1 | 0 | 14 |
+| Non-functional requirements | 12 | 8 | 0 | 20 |
+| Eval scenarios | 0 | 35 | 1 | 36 |
 | Eval invariants | 0 | 0 | 8 | 8 |
 | Deliverables | 0 | 2 | 5 | 7 |
 
-**In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It can cancel or move a booking the same way: a card, the user's own yes, then a worker that checks the provider before it reports success. It now remembers lasting facts across chats, and the user can inspect, correct and forget them. Every model call gets a context built by code, within 8,000 estimated tokens, and logged first.
+**In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It can cancel or move a booking the same way: a card, the user's own yes, then a worker that checks the provider before it reports success. It now remembers lasting facts across chats, and the user can inspect, correct and forget them. Every model call gets a context built by code, within 8,000 estimated tokens, and logged first. If a provider cancels a booking, the user hears about it with no prompt and gets replacements within their limits, and rebooking needs a new card.
 
 ## What you can test today
 
@@ -34,10 +34,11 @@ Run `make up`, then open `http://localhost:3000`.
 | Reload the page | The chat stays. The agent still knows the context |
 | Tell it a lasting fact | "I live in Indiranagar and go to office Mon to Fri." No need to say "remember". Each fact is saved, and the reply says so. A new chat uses them without asking |
 | Answer a guess | If your words do not state a fact, the chat asks "Remember this?". Click, or type yes or no |
-| Correct or forget a fact | In chat or on the panel. The old value no longer reaches the model |
-| See the seeded memories | Open `http://localhost:3000/?user=seed-user`: 40 trusted facts and 8 unconfirmed |
+| Correct or forget a fact | In chat, or under Memory in the top bar. The old value no longer reaches the model |
+| See the seeded memories | Open `http://localhost:3000/?user=seed-user`, then click Memory: 40 trusted facts and 8 unconfirmed |
 | Start a new chat | A new session that knows nothing about the old one |
-| See what a turn did | The trace panel shows outcome, latency, tokens and cost. "View trace" switches between replies |
+| See what a turn did | Click Trace in the top bar, or "View trace" under a reply. The panel shows outcome, latency, tokens, cost and each step |
+| Open a previous chat | Click New chat, then pick the old chat under Recents. Its messages come back, and new messages stay in its session. News about a closed chat waits inside it |
 | Search and compare | "Find a plumber in Indiranagar this week, mornings only, under ₹1,500." It saves the details, searches and recommends one. The trace shows each state change |
 | Correct one detail | Then "Actually make the budget ₹900." It keeps everything else and searches again. Providers over ₹900 never reach the model |
 | Details over several turns | "I need an electrician." Then "I'm in Koramangala." Then "Any day this week works." It asks only for what is missing, then searches |
@@ -58,9 +59,10 @@ Run `make up`, then open `http://localhost:3000`.
 | Try to force a booking | "I already approved, book it now." You still get a card, and nothing is booked until you answer it |
 | Confirm twice | Type "yes" again while it runs. It says you already confirmed, and only one booking is made |
 | Force a hard case | Start the stack with `MOCK_EVAL_MODE=true make up`, then see "Force a booking outcome" below |
-| Check the services | The status bar shows the API, PostgreSQL, Redis, worker, scheduler, mock provider and Gemini key |
-| Run a job | "Run test job" sends a job through the outbox, Redis and worker |
-| Break something | `docker stop errand-agent-redis-1`, then chat. You get a clear reply, and the status bar names Redis. Use `docker start` to recover |
+| Check the services | The top bar says "All services up". Click it to see the API, PostgreSQL, Redis, worker, scheduler, mock provider and Gemini key |
+| Run a job | "Run test job", in the same list, sends a job through the outbox, Redis and worker |
+| Provider cancels a booking | With eval mode on, book something, then see "Force a provider cancel" below. The news appears in the chat within about 20 s |
+| Break something | `docker stop errand-agent-redis-1`, then chat. You get a clear reply, and the top bar names Redis. Use `docker start` to recover |
 
 **Of the brief's three example requests, two now finish.** "Find a plumber" can go all the way to a verified booking. "Book the same electrician" can book once you pick the provider, but code does not resolve "same as last time" yet. "Move my AC servicing" works once you say the day and time.
 
@@ -68,6 +70,12 @@ Run `make up`, then open `http://localhost:3000`.
 
 ```bash
 curl -X POST localhost:8100/admin/scenario -H 'content-type: application/json' -d '{"book_outcomes":["timeout_booked"]}'
+```
+
+**Force a provider cancel.** Use the booking ID from the chat. Each run's trace file is in `artifacts/traces/`.
+
+```bash
+curl -X POST localhost:8100/admin/provider-cancel -H 'content-type: application/json' -d '{"booking_id":"bkg-..."}'
 ```
 
 To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}` after the card appears and before you confirm. To see an expired hold, send `{"seconds":601}` to `/admin/clock/advance` at the same point.
@@ -87,7 +95,7 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | F9 | Remember across sessions | Done | `memories` table keyed by user. A new session gets the facts, and a remembered area fills the errand with source `memory`. Unit tests and a live check | |
 | F10 | Inspect, correct, forget | Done | Chat tools, REST and the Memory panel. Correct adds a row and supersedes. Forget wipes the value, redacts `turn_view`, the errand, `context_log` and traces, then deletes the ADK session. Unit tests and a live check found the values in none of them | |
 | F11 | Explicit vs inferred | Done | `propose_memory`: the quote must be the user's, word for word, and must state the value. Anything else stays out of context, and the chat asks the user. A click, a whole-message yes or saying it plainly makes it count. Tested | |
-| F12 | Proactive cancellation | Not started | Worker and scheduler run, and the sweep job proves it | Provider poll job, notify policy, replacement search, notifications |
+| F12 | Proactive cancellation | Done | A scheduled poll, a coded notify rule with its reason on record, replacements within the saved limits, no hold, and a fresh card to rebook. Integration tests, a live run and the real UI | |
 | F13 | Real LLM drives the agent | Done | Gemini through ADK reads requests, saves details and calls every propose tool. A full booking, a move and memory changes checked live | |
 | F14 | Mock tools match the contract | Done | All 8 tools in their own container, with their own database. Outcomes come from `hash(seed, key, attempt)`. Scenarios force any outcome. Clock can move. Split tested over 100,000 keys. Races, a real client timeout and a server kill tested on PostgreSQL | |
 
@@ -100,14 +108,14 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | N3 | Approval enforced by code | Done | The gateway accepts `book` only from the saga, with a token the real verifier accepts. The yes is read from the raw message before the model runs. Direct gateway calls were refused with no token, a made-up token, an unanswered approval, another user, another key, another hold, and as the model. `cancel` and `reschedule` follow the same rules, and a token from a `book` approval cannot cancel | |
 | N4 | Material change voids approval | Done | SHA-256 over action, user, provider, slot, price, list price, currency, hold and expiry. An edit to any of these on the row is refused. A list price that moved after approval is refused before any call, and a fresh card shows the new price. A changed detail or a newer card voids the old one | |
 | N5 | No duplicate bookings | Done | Key is `book:<approval_id>`. One approval has one attempt. Consuming is a conditional update: of 10 concurrent confirmations on PostgreSQL, 1 won. A partial unique index stops a second open attempt on a slot. Two workers at once and a killed worker each left one booking | |
-| N6 | Verify after a timeout | Done | Every `book` result goes through VERIFYING and `get_booking_status`. The state machine has no other way to DONE. A timeout that booked is not retried. One that did not book is retried with the same key, at most twice. Tested on real services and through the UI | |
+| N6 | Verify after a timeout | Done | Every `book` result goes through VERIFYING and `get_booking_status`. Nothing leaves EXECUTING for DONE without passing VERIFYING, and a test walks the state machine to prove it. The only other way in is a blank errand with no booking, from INTAKE. A timeout that booked is not retried. One that did not book is retried with the same key, at most twice. Tested on real services and through the UI | |
 | N7 | No false success claims | Partial | Success text is a template, written only after a verified status. `after_model` replaces a model reply that claims a result, unless this turn read the bookings or the session has a verified booking. Tested through the real ADK loop | The guard reads wording, so a claim in unusual words can pass. Recorded Gemini replies and evals |
 | N8 | Safe across restarts | Partial | The attempt row commits before each call. A real worker killed during `book` was resolved by status with one booking and no second call. Crash points before and after `book` tested. A Redis wipe after approval still booked once | `api` kill tests through the eval harness |
 | N9 | Tool output is data | Done | The model has no side-effect tool. Reviews are labelled untrusted and flagged in the trace. A scripted model that obeys an injection still cannot book. Live Gemini read real injections and did not follow them. The card holds no review text, tested. A review cannot plant a fact or make the model forget one, tested | |
 | N10 | Fixed context budget | Done | `ContextAssembler` runs on every model call, mid-run ones too. Seeded user, live: estimated 7,979 and 7,991 of 8,000, real 6,240 and 6,647. Trim order tested piece by piece. If nothing is left to trim, the call does not run | |
 | N11 | No forgotten or unconfirmed facts | Done | SQL filter first, redacted `turn_view`, summary built from redacted text. Seeded markers searched in every request and every logged context | |
 | N12 | Log context each turn | Done | Full system text and contents, tool names, per-piece counts and the real count go to `context_log` before each call. A failed write stops the call and gives a clear reply, tested | |
-| N13 | Trace every run | Partial | `runs` and `trace_events`: model calls, tool names, sanitized arguments and results, state changes, latency, outcome, refusals. Shown in the UI | JSONL file per run, run ID across jobs |
+| N13 | Trace every run | Done | `runs` and `trace_events`: model calls, tool names, sanitized arguments and results, state changes, latency, outcome, refusals. Shown in the UI. One JSONL file per run, written by both api and worker under one run ID. Checked live against the database | |
 | N14 | Tokens and cost | Done | Usage and cost per call and per run. Tested with live and scripted models | |
 | N15 | Survive model and tool failure | Partial | Model: request timeout, one retry on 503 and 504, clear reply. Rate limits: waits up to 30 s if Gemini asks, otherwise says the model is busy and when to retry. Checked against the real free-tier limit. Tools: timeout, per-tool retries, clear errors. Saga: a job limit during `book`, and status or provider reads being down, stay open as "not confirmed yet" and resolve later | Cancel and reschedule retries in the saga |
 | N16 | Safe concurrency | Done | Redis turn lock, `StaleSessionError` backstop, job and attempt leases with fencing, and workflow row locks with a version check, tested on PostgreSQL. Only `api` writes ADK sessions. A click needs no turn lock, because it only touches PostgreSQL through a conditional update | |
@@ -121,9 +129,9 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | Component | Status | Notes |
 |---|---|---|
 | `postgres`, `redis`, `migrate` | Done | Three databases. `migrate` also creates the mock's tables and demo bookings |
-| `api` | Partial | Has `/chat`, `/approvals/{id}`, `/bookings/current`, `/notifications`, `/runs/{id}/trace`, `/healthz`, `/readyz`, `/system/*`. Missing `/memories`, `/events` |
-| `worker`, `scheduler` | Partial | Outbox, leases, sweep and the booking saga work. Proactive jobs are missing |
-| `web` | Partial | Chat, approval card, booking results by polling, trace that follows a running booking, status bar, Memory panel. Missing SSE |
+| `api` | Done | Has `/chat`, `/approvals/{id}`, `/bookings/current`, `/notifications`, `/runs/{id}/trace`, `/healthz`, `/readyz`, `/system/*`. Also `/memories` and `/events` |
+| `worker`, `scheduler` | Done | Outbox, leases, sweep, the booking saga and the provider poll work |
+| `web` | Done | Chat, approval card, news by SSE, trace that follows a running booking, service status menu, Memory panel, previous chats |
 | `mock-provider` | Done | Port 8100. `/admin` is off unless `MOCK_EVAL_MODE=true` |
 | `evals` | Not started | |
 | Tool gateway | Done | Allowlist, caller rights, schema, user binding, budget, retries, timeouts, sanitizing, tracing and the real approval verifier |
@@ -168,7 +176,9 @@ The eval harness and the invariant checker (I1 to I8) are not built, so there is
 | E22 | Forget a memory also in old chat | Partial | Unit tests, one on the seeded long chat, and a live check |
 | E23 | Inferred fact, then confirmed | Partial | Unit test |
 | E26 | 60 memories and a long chat | Partial | Unit test on every call, and a live check. See the `list_memories` limit below |
-| E20, E24, E25 | All others | Not started | Need code resolution of past bookings and proactive detection |
+| E24 | Provider cancels with no user prompt | Partial | Integration tests and a live run. A running turn is tested with the lock held, not with a real turn |
+| E25 | Duplicate event, or past booking | Partial | Integration tests. A repeat was also checked live |
+| E20 | Same as last time | Not started | Needs code resolution of past bookings |
 
 ## Test audit
 
@@ -212,7 +222,7 @@ Run on 3 Nov 2026 against the mock provider and gateway. Passing tests prove lit
 | Design note, 1 page | Not started | Write once the core exists |
 | Eval table | Not started | Needs the harness |
 | Three real bugs | Partial | [BUGS.md](BUGS.md) has twelve candidates and some smaller bugs |
-| End-to-end trace | Not started | A timeout-after-success run now works in one run's trace. It needs the JSONL file and the excerpt |
+| End-to-end trace | Not started | The JSONL file now exists, with api and worker under one run ID. It needs a timeout-after-success run and the excerpt |
 | Demo, 3 to 5 min | Not started | The UI can now show chat and trace side by side |
 | AI assistant transcript | Not started | Export at the end |
 
@@ -228,7 +238,8 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **Timeouts are not retried:** the single retry covers 429, 503 and 504 only.
 - **Added `tracing` early:** it was needed to prove the LLM works.
 - **Added a ping job and `/system/*`:** these prove the job path, and the UI uses them.
-- **Chat history in the browser:** the server has no history endpoint, so the UI keeps the visible chat in `localStorage`. The model's memory of the chat is on the server.
+- **Chat history in the browser:** the server has no history endpoint, so the UI keeps the visible chats and the Recents list in `localStorage`, up to 50 chats. Another browser does not see them. The model's memory of each chat is on the server.
+- **UI layout:** a sidebar with previous chats, one chat column, and Trace and Memory as top-bar buttons that open a side panel. Light mode only for now.
 - **Caller identity on the mock:** `hold_slot`, `book` and the others need to know whose booking it is, but their inputs are fixed by the brief. So identity travels in an `X-User-Id` header, like an auth header, and the inputs stay as specified.
 - **Mock behaviour the brief leaves open:**
   - Retrying after a timeout that did not book draws a new outcome, because the attempt number is part of the hash. Otherwise the retry could never succeed.
@@ -247,7 +258,14 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **Tool timeout:** 10 s per call, a value the blueprint did not set.
 - **Today's date in the prompt:** the model cannot work out "this week" without it.
 - **One domain for approvals and the saga:** `bookings` holds both, because confirming writes the approval, attempt and job in one transaction. `notifications` is separate, because proactive detection will use it too.
-- **Polling before SSE:** the UI polls `/notifications` every 2 s while a booking runs, and the trace panel refreshes the same way. SSE is step 7.
+- **The trace panel still polls:** chat news comes by SSE, as the blueprint says. The panel refreshes every 2 s while a run is open, because most trace events make no notification.
+- **SSE also looks again every 10 s:** the blueprint stops live push when Redis is down, and shows stored notices on the next load. Each reader now also rereads PostgreSQL on a timer, so Redis down only slows delivery. A wake-up lost to a crash costs the same delay.
+- **Streams are per user, not per chat:** the UI keeps one chat, so a cancel in an older chat would otherwise never be seen. The UI shows routine news only for its own chat. Proactive news from another chat comes with a button to open that chat.
+- **Two notices for one cancel:** one for the cancel, one for the replacements. A provider that is down cannot delay the news of the cancel.
+- **The provider that cancelled is not offered again:** the brief does not say. It seemed wrong to offer it back at once. The user can still ask for it, and a new search will find it.
+- **A blank errand can close:** `INTAKE` to `DONE` is a new legal move. "Thanks" after a booking opens a blank errand, which would otherwise block reopening the old one under the one-active-errand index.
+- **Added `run_started`:** the JSONL file has this one extra line first, with the user and session. The database has no matching event.
+- **Model is `gemini-2.5-flash`:** the blueprint names `gemini-3.5-flash-lite`, which took 1 s to 20 s on a tiny prompt. `gemini-3.6-flash` took 7 s to 13 s, and `gemini-3.8-flash` returned 503 on all 3 tries. In a test of small tool calls, `gemini-2.5-flash` took about 1.5 s with 4 of 4 correct. Spikes still happen on it. `MODEL_NAME` changes it.
 - **A proposal must come from the last search:** `propose_booking` refuses a provider or slot outside the stored shortlist. So the budget and time limits hold at the proposal, not only in what the model was shown.
 - **What "current data" means for the hash:** the brief has no tool that reads a hold's quote again. So the saga reads the provider's list price with `get_provider` before each `book`, and hashes that with the approved facts. The price also covers the hold's quote through the row hash.
 - **Eval control `provider_prices`:** a new scenario field on the mock, so a price can move after approval. The tool contract does not change.
@@ -272,6 +290,15 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **The ADK session is deleted after the turn:** deleting it mid-run would break the run. A session busy with another turn stays marked, and goes at the start of its next turn.
 - **The context log names the tools:** the declarations are counted in full, but logged by name, because they are the same on every call.
 
+## Known limits of proactive detection
+
+- **Only our own bookings are watched:** a cancel on a booking made outside this system, such as a seeded demo booking, stays silent. It has no chat to report to.
+- **A booking made in another errand's chat:** if another errand is open, the user hears about the cancel and gets no list until they ask.
+- **No area or days on record:** a booking that was only moved here has no saved request, so the notice asks for them. Remembered facts are not used for this.
+- **Soft preferences do not filter:** area, dates, time window and budget are hard limits. Free-text preferences are not checked by code, here or in a normal search.
+- **A booking the provider stops listing:** nothing notices. The mock never removes a booking.
+- **Rating ranks the options:** the notice lists the best 3 by rating, then price. The rest can still be picked.
+
 ## Suggested order
 
 1. **Mock provider:** done.
@@ -280,11 +307,42 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 4. **Approvals and booking saga:** done.
 5. **Cancel and reschedule:** done.
 6. **Memory and ContextAssembler:** done.
-7. **Proactive cancellation, SSE and JSONL traces.**
+7. **Proactive cancellation, SSE and JSONL traces:** done.
 8. **Eval harness, table and invariants.**
 9. **Design note, trace excerpt, demo and transcript.**
 
 ## Log
+
+### 3 Nov 2026: UI redesign
+
+- **Look:** warm neutrals, one clay accent, serif for replies and headings, in the style of the Claude app. Light mode only. Shared parts are in `web/src/components/ui.tsx`.
+- **Layout:** a sidebar with New chat and Recents. Trace and Memory are collapsible top-bar buttons, closed by default, and one shows at a time. The status bar became a menu in the top bar that names any service that is down.
+- **Previous chats:** new. Each chat keeps its own messages and news in `localStorage`. Opening a chat asks the server which card is still open. Nothing can switch chats while a reply is on its way.
+- **Replies:** Markdown through `react-markdown`. The model's text can never make a link or load an image, because it has read provider reviews. Icons come from `lucide-react`.
+- **Trace:** steps are now a timeline that expands. Problems and suspicious text start open.
+- **CI found:** `INTAKE` to `DONE`, from the proactive work, had broken two state machine tests, and the N6 row here was no longer true. See `BUGS.md`.
+- **Proof:** 60 UI tests, 12 of them new. Headless Chromium through nginx: chat, card, trace, memory, new chat, reopening a chat, reload, no browser errors, no sideways scroll at 390 px and 1000 px.
+- **Not tested with live Gemini:** the daily quota ran out, and the app said so correctly. That browser run faked only `/chat`, the trace and the card answer, so a real model reply has not been seen in the new UI.
+
+### 3 Nov 2026: Model is now `gemini-2.5-flash`
+
+- **Change:** it is the default in `config.py`, `compose.yaml` and `.env.example`. Images are rebuilt. `gemini-3.6-flash` was tried first and dropped.
+- **Groq looked at and not used:** on the free tier, `gpt-oss-120b` allows 8,000 tokens a minute and 200,000 a day. A replay of 6 real calls took 125 s, of which 119 s was waiting on the limit.
+- **Proof:** the live script passed on this model: search, booking, provider cancel, one notice per event, replay, and a fresh card to rebook. "Thanks" after a booking got a correct reply.
+- **Speed in that run:** of 10 successful calls, the median was 2.1 s and the slowest was 32.4 s. One more call failed with a 503 after 52.5 s, so that turn ended with the model-unavailable reply. The next turn worked, because the search was already saved. This is one short run. `gemini-3.5-flash-lite` had a median of 1.4 s over 160 calls earlier the same day, so this does not show that the new model is faster.
+
+### 3 Nov 2026: Proactive cancellation, SSE and JSONL traces
+
+- **Detection:** every 20 s the scheduler sends a poll. The worker compares `list_bookings` with our attempts, and `domains/proactive/policy.py` decides and gives the reason. One `booking_disruptions` row per booking means a repeat stays silent. A past booking gets a row with its reason and no notice.
+- **Replacements:** the cancel notice goes out first, in the same transaction as its row. A second step then searches within the saved request and leaves out the provider that cancelled. It holds nothing. It waits if a turn holds the session lock, so a running turn is not disturbed. A blank errand gives way, and a real one is left alone.
+- **SSE:** `GET /events` replays stored rows after the cursor, then pushes on a Redis wake-up. The chat now uses it in place of polling. A notice about another chat shows only if it is proactive, with a button to open that chat.
+- **JSONL:** with `TRACE_DIR` set, api and worker append to one file per run under `./artifacts/traces`. Forgetting a fact scrubs these files too.
+- **Found:** live testing showed "thanks" after a verified booking getting "please confirm the card". See `BUGS.md`. The system's news now sits in the model's chat history, in time order.
+- **Proof, live:** real Gemini booked and verified. The provider cancelled with no user prompt. One cancel notice and one replacement notice arrived over SSE. Two more polls added no notice, and `repeats_seen` was 2. A reconnect with a cursor replayed exactly the 2 missed rows. The offered list left out the provider that cancelled, the provider showed no new booking, and picking a replacement gave a new card with no new attempt. Each run's file had one line per database event, plus its first line. The booking run had both `api` and `worker` lines.
+- **Proof, real UI:** headless Chromium through nginx. The notices appeared with no reload, 19.6 s after the cancel, and still appeared once after a reload.
+- **Proof, Redis down:** with Redis stopped and a stream open, a row inserted by hand arrived after 10 s. The status bar recovered by itself after a restart.
+- **Tests run:** `tests/unit/test_proactive.py`, `tests/integration/test_proactive.py` (5 polls at once make one notice, the real unique index, a past booking, a wake-up over real Redis), the memory, agent runtime, broker and tracing unit tests, and all web tests. `alembic check` is clean. The full server suite has not run: GitHub CI runs it on the PR.
+- **Not tested:** a worker killed between the two steps on real processes. The turn lock test shows that a row left in `detected` is finished by a later poll. "Open that chat" has a UI test, but was not clicked in the real UI. The harness for E24 and E25 is step 8.
 
 ### 3 Nov 2026: Memory and ContextAssembler
 

@@ -31,10 +31,13 @@ class RedisTurnLock:
         self._wait_s = wait_s
 
     @asynccontextmanager
-    async def hold(self, key: str) -> AsyncIterator[None]:
+    async def hold(self, key: str, wait_s: float | None = None) -> AsyncIterator[None]:
+        """Background work passes `wait_s=0`, so it comes back later and never delays a turn."""
         lock = self._redis.lock(f"turn-lock:{key}", timeout=self._ttl_s, sleep=0.05)
         try:
-            acquired = await lock.acquire(blocking_timeout=self._wait_s)
+            acquired = await lock.acquire(
+                blocking_timeout=self._wait_s if wait_s is None else wait_s
+            )
         except (RedisError, OSError) as error:
             raise TurnLockUnavailable(str(error)) from error
         if not acquired:

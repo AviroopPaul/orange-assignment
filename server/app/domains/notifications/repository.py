@@ -31,6 +31,17 @@ class NotificationRepository:
         )
         return rows.all()
 
+    async def after_for_user(
+        self, user_id: str, after_id: int, limit: int
+    ) -> Sequence[Notification]:
+        rows = await self._session.scalars(
+            select(Notification)
+            .where(Notification.user_id == user_id, Notification.id > after_id)
+            .order_by(Notification.id)
+            .limit(limit)
+        )
+        return rows.all()
+
     async def latest(self, user_id: str, session_id: str, limit: int) -> Sequence[Notification]:
         rows = await self._session.scalars(
             select(Notification)

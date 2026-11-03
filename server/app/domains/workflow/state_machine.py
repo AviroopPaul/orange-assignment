@@ -12,7 +12,8 @@ class IllegalTransition(Exception):
 
 TRANSITIONS: dict[S, frozenset[S]] = {
     # A cancel or a reschedule needs no search, so its card can open straight from INTAKE.
-    S.INTAKE: frozenset({S.SEARCHING, S.AWAITING_APPROVAL, S.LIMIT_REACHED, S.FAILED}),
+    # A blank errand closes to DONE when a provider cancel reopens an older one in its session.
+    S.INTAKE: frozenset({S.SEARCHING, S.AWAITING_APPROVAL, S.DONE, S.LIMIT_REACHED, S.FAILED}),
     S.SEARCHING: frozenset({S.COMPARING, S.INTAKE, S.LIMIT_REACHED, S.FAILED}),
     S.COMPARING: frozenset({S.SEARCHING, S.INTAKE, S.AWAITING_APPROVAL, S.LIMIT_REACHED, S.FAILED}),
     S.AWAITING_APPROVAL: frozenset({S.EXECUTING, S.COMPARING, S.SEARCHING, S.INTAKE, S.FAILED}),

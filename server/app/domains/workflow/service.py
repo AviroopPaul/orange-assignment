@@ -90,6 +90,12 @@ class ProposalTarget:
     max_budget: int | None
 
 
+def _has_details(request: dict[str, Any]) -> bool:
+    return any(
+        details.field_value(request, name) not in (None, "", []) for name in details.ALL_FIELDS
+    )
+
+
 def same_time(first: str, second: str) -> bool:
     try:
         one, other = datetime.fromisoformat(first), datetime.fromisoformat(second)
@@ -633,12 +639,57 @@ class WorkflowService:
     ) -> list[tuple[WorkflowState, WorkflowState]]:
         """A cancel or a move has finished. An errand in progress carries on where it was."""
         workflow = await WorkflowRepository(session).get_by_id(workflow_id, lock=True)
-        has_errand = workflow is not None and any(
-            details.field_value(workflow.request, name) not in (None, "", [])
-            for name in details.ALL_FIELDS
-        )
+        has_errand = workflow is not None and _has_details(workflow.request)
         target = WorkflowState.COMPARING if has_errand else WorkflowState.DONE
         return await self.move_in(session, workflow_id, WorkflowState.VERIFYING, target)
+
+    async def leave_card_in(
+        self, session: AsyncSession, workflow_id: uuid.UUID
+    ) -> list[tuple[WorkflowState, WorkflowState]]:
+        """A card closed with nothing done. The errand goes back to where it can continue."""
+        workflow = await WorkflowRepository(session).get_by_id(workflow_id, lock=True)
+        if workflow is None or WorkflowState(workflow.state) != WorkflowState.AWAITING_APPROVAL:
+            return []
+        target = WorkflowState.COMPARING if _has_details(workflow.request) else WorkflowState.INTAKE
+        return await self.move_in(session, workflow_id, target)
+
+    async def request_of(self, workflow_id: uuid.UUID) -> dict[str, Any]:
+        async with self._db.session_scope() as session:
+            workflow = await WorkflowRepository(session).get_by_id(workflow_id)
+        return workflow.request if workflow else {}
+
+    async def reopen_in(
+        self,
+        session: AsyncSession,
+        workflow_id: uuid.UUID,
+        user_id: str,
+        session_id: str,
+        shortlist: dict[str, Any],
+    ) -> list[tuple[WorkflowState, WorkflowState]] | None:
+        """A provider cancelled a finished booking, so its errand continues from a new search.
+
+        Returns None if another errand is under way in this session. That one is left alone.
+        """
+        repository = WorkflowRepository(session)
+        moves = []
+        active = await repository.get_active(user_id, session_id, lock=True)
+        if active is not None:
+            if WorkflowState(active.state) != WorkflowState.INTAKE or _has_details(active.request):
+                return None
+            moves += await self.move_in(session, active.id, WorkflowState.DONE)
+        target = await repository.get_by_id(workflow_id, lock=True)
+        if target is None or WorkflowState(target.state) != WorkflowState.DONE:
+            return None
+        moves += await self.move_in(
+            session, workflow_id, WorkflowState.DISRUPTED, WorkflowState.COMPARING
+        )
+        target = await repository.get_by_id(workflow_id, lock=True)
+        assert target is not None
+        if not await repository.save(
+            workflow_id, target.version, shortlist=shortlist, updated_at=self._clock.now()
+        ):
+            raise WorkflowConflict(str(workflow_id))
+        return moves
 
     async def other_slots(
         self, workflow_id: uuid.UUID, provider_id: str, taken_slot: str, limit: int = 3

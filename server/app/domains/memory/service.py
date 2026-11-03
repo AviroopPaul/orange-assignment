@@ -101,7 +101,7 @@ class MemoryService:
     async def recent_turns(self, user_id: str, session_id: str) -> list[Turn]:
         async with self._db.session_scope() as session:
             rows = await MemoryRepository(session).recent_turns(user_id, session_id, MAX_TURNS_READ)
-        return [Turn(row.role, row.text) for row in rows]
+        return [Turn(row.role, row.text, row.created_at) for row in rows]
 
     # What the model may know
 

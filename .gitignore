@@ -12,3 +12,7 @@ dist/
 
 # The brief belongs to Orange, so it stays out of the repo.
 *.pdf
+
+# Trace files from a local run. Curated excerpts go in docs/.
+artifacts/*
+!artifacts/.gitkeep

@@ -8,6 +8,7 @@ from taskiq_redis import RedisStreamBroker
 
 from app.core.config import Settings
 from app.domains.jobs.broker import (
+    PROVIDER_POLL_TASK,
     RUN_JOB_TASK,
     SWEEP_TASK,
     ResilientStreamBroker,
@@ -29,7 +30,7 @@ def test_sweep_is_scheduled_at_the_configured_interval() -> None:
     broker = build_broker(Settings())
     register_tasks(broker, sweep_interval_s=15)
     tasks = broker.get_all_tasks()
-    assert set(tasks) == {RUN_JOB_TASK, SWEEP_TASK}
+    assert set(tasks) == {RUN_JOB_TASK, SWEEP_TASK, PROVIDER_POLL_TASK}
     assert tasks[SWEEP_TASK].labels["schedule"] == [{"interval": 15}]
 
 

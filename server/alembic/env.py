@@ -12,6 +12,7 @@ from app.domains.bookings import models as booking_models  # noqa: F401
 from app.domains.jobs import models as job_models  # noqa: F401
 from app.domains.memory import models as memory_models  # noqa: F401
 from app.domains.notifications import models as notification_models  # noqa: F401
+from app.domains.proactive import models as proactive_models  # noqa: F401
 from app.domains.tracing import models as tracing_models  # noqa: F401
 from app.domains.workflow import models as workflow_models  # noqa: F401
 

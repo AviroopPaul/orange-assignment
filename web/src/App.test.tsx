@@ -1,11 +1,19 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { App } from "./App";
-import { fakeApi, HEALTHY_STATUS, traceFor } from "./test/fakeApi";
+import {
+  fakeApi,
+  FakeEventSource,
+  HEALTHY_STATUS,
+  pushNotification,
+  traceFor,
+} from "./test/fakeApi";
 
-const STATUS_OK = { "GET /api/system/status": () => ({ json: HEALTHY_STATUS }) };
+const STATUS_OK = {
+  "GET /api/system/status": () => ({ json: HEALTHY_STATUS }),
+};
 
 function reply(runId: string, text: string, extra: Record<string, unknown> = {}) {
   return () => ({
@@ -18,6 +26,17 @@ function reply(runId: string, text: string, extra: Record<string, unknown> = {})
       ...extra,
     },
   });
+}
+
+const chatRegion = () => screen.getByRole("region", { name: "Chat" });
+
+function openPanel(name: "Trace" | "Memory") {
+  return userEvent.click(screen.getByRole("button", { name }));
+}
+
+async function openServices() {
+  await userEvent.click(await screen.findByRole("button", { name: /services|down|unreachable/i }));
+  return screen.findByRole("list", { name: "Service status" });
 }
 
 async function say(text: string) {
@@ -37,10 +56,14 @@ describe("chat", () => {
     await say("I need a plumber");
 
     expect(await screen.findByText("Which area are you in?")).toBeInTheDocument();
-    expect(screen.getByText("I need a plumber")).toBeInTheDocument();
+    expect(within(chatRegion()).getByText("I need a plumber")).toBeInTheDocument();
     const posted = calls.find((call) => call.key === "POST /api/chat");
-    expect(posted?.body).toEqual({ user_id: "demo-user", message: "I need a plumber" });
+    expect(posted?.body).toEqual({
+      user_id: "demo-user",
+      message: "I need a plumber",
+    });
 
+    await openPanel("Trace");
     const trace = screen.getByRole("region", { name: "Run trace" });
     expect(await within(trace).findByText("Model call")).toBeInTheDocument();
     expect(within(trace).getByText("gemini-3.5-flash-lite")).toBeInTheDocument();
@@ -126,7 +149,10 @@ describe("chat", () => {
         reason: "model_unavailable",
       }),
       "GET /api/runs/run-1/trace": () => ({
-        json: traceFor("run-1", { outcome: "tool_failed", reason: "model_unavailable" }),
+        json: traceFor("run-1", {
+          outcome: "tool_failed",
+          reason: "model_unavailable",
+        }),
       }),
     });
     render(<App />);
@@ -140,7 +166,9 @@ describe("chat", () => {
   it("does not flag a turn that simply asks the user a question", async () => {
     fakeApi({
       ...STATUS_OK,
-      "POST /api/chat": reply("run-1", "Which area are you in?", { outcome: "needs_input" }),
+      "POST /api/chat": reply("run-1", "Which area are you in?", {
+        outcome: "needs_input",
+      }),
       "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
     });
     render(<App />);
@@ -157,7 +185,11 @@ describe("chat", () => {
       "POST /api/chat": reply(
         "run-1",
         "The AI model is busy because we hit its usage limit. Please try again in about 46 seconds.",
-        { outcome: "limit_reached", reason: "model_rate_limited", retry_after_s: 46 },
+        {
+          outcome: "limit_reached",
+          reason: "model_rate_limited",
+          retry_after_s: 46,
+        },
       ),
       "GET /api/runs/run-1/trace": () => ({
         json: traceFor("run-1", {
@@ -182,7 +214,8 @@ describe("chat", () => {
     await say("hello");
 
     expect(await screen.findByText(/in about 46 seconds/)).toBeInTheDocument();
-    expect(screen.getByText("Limit reached")).toBeInTheDocument();
+    expect(within(chatRegion()).getByText("Limit reached")).toBeInTheDocument();
+    await openPanel("Trace");
     expect(await screen.findByText("Rate limited")).toBeInTheDocument();
     expect(screen.getByText("46 s")).toBeInTheDocument();
   });
@@ -235,6 +268,7 @@ describe("chat", () => {
     await screen.findByText("Reply 1");
     await say("second");
     await screen.findByText("Reply 2");
+    await openPanel("Trace");
     expect(await screen.findByText("Run run-2")).toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole("button", { name: "View trace" })[0]);
@@ -254,13 +288,15 @@ describe("chat", () => {
     first.unmount();
 
     render(<App />);
-    expect(screen.getByText("remember me")).toBeInTheDocument();
+    expect(within(chatRegion()).getByText("remember me")).toBeInTheDocument();
     expect(screen.getByText("Session session-")).toBeInTheDocument();
+    await openPanel("Trace");
     expect(await screen.findByText("Run run-1")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "New chat" }));
-    expect(screen.queryByText("remember me")).not.toBeInTheDocument();
-    expect(screen.getByText("New session")).toBeInTheDocument();
+    expect(within(chatRegion()).queryByText("remember me")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
+    expect(screen.queryByText("Session session-")).not.toBeInTheDocument();
 
     await say("fresh");
     await waitFor(() => {
@@ -298,7 +334,11 @@ describe("trace", () => {
               seq: 1,
               kind: "tool_refused",
               name: "book",
-              data: { caller: "model", reason: "not_allowed", args: { hold_id: "h1" } },
+              data: {
+                caller: "model",
+                reason: "not_allowed",
+                args: { hold_id: "h1" },
+              },
               latency_ms: null,
               input_tokens: null,
               output_tokens: null,
@@ -310,6 +350,7 @@ describe("trace", () => {
       }),
     });
     render(<App />);
+    await openPanel("Trace");
 
     await say("book it");
 
@@ -349,6 +390,7 @@ describe("trace", () => {
       }),
     });
     render(<App />);
+    await openPanel("Trace");
 
     await say("tell me about them");
 
@@ -381,6 +423,7 @@ describe("trace", () => {
       }),
     });
     render(<App />);
+    await openPanel("Trace");
 
     await say("go");
 
@@ -399,7 +442,12 @@ describe("trace", () => {
               seq: 1,
               kind: "tool_call",
               name: "book",
-              data: { caller: "saga", status: "timeout", error_code: "timeout", ambiguous: true },
+              data: {
+                caller: "saga",
+                status: "timeout",
+                error_code: "timeout",
+                ambiguous: true,
+              },
               latency_ms: 10000,
               input_tokens: null,
               output_tokens: null,
@@ -411,6 +459,7 @@ describe("trace", () => {
       }),
     });
     render(<App />);
+    await openPanel("Trace");
 
     await say("hello");
 
@@ -421,9 +470,13 @@ describe("trace", () => {
     fakeApi({
       ...STATUS_OK,
       "POST /api/chat": reply("run-1", "Noted."),
-      "GET /api/runs/run-1/trace": () => ({ status: 404, json: { detail: "Run not found" } }),
+      "GET /api/runs/run-1/trace": () => ({
+        status: 404,
+        json: { detail: "Run not found" },
+      }),
     });
     render(<App />);
+    await openPanel("Trace");
 
     await say("hello");
 
@@ -431,12 +484,13 @@ describe("trace", () => {
   });
 });
 
-describe("status bar", () => {
+describe("service status", () => {
   it("shows every service as up", async () => {
     fakeApi(STATUS_OK);
     render(<App />);
 
-    const services = await screen.findByRole("list", { name: "Service status" });
+    expect(await screen.findByRole("button", { name: "All services up" })).toBeInTheDocument();
+    const services = await openServices();
     await waitFor(() => expect(within(services).getAllByRole("listitem")).toHaveLength(7));
     expect(within(services).getByText("Mock provider")).toBeInTheDocument();
     expect(within(services).getByText("Worker")).toBeInTheDocument();
@@ -445,17 +499,23 @@ describe("status bar", () => {
 
   it("names the service that is down", async () => {
     fakeApi({
-      "GET /api/system/status": () => ({ json: { ...HEALTHY_STATUS, redis: false } }),
+      "GET /api/system/status": () => ({
+        json: { ...HEALTHY_STATUS, redis: false },
+      }),
     });
     render(<App />);
 
-    expect(await screen.findByText("is down", { exact: false })).toHaveTextContent("is down");
-    const redis = screen.getByText("Redis");
-    expect(redis).toHaveClass("down");
+    // The top bar names it without opening anything.
+    expect(await screen.findByRole("button", { name: "Redis is down" })).toBeInTheDocument();
+    const services = await openServices();
+    expect(within(services).getByText("Redis")).toHaveClass("down");
+    expect(within(services).getByText("is down", { exact: false })).toHaveTextContent("is down");
   });
 
   it("says when the API cannot be reached", async () => {
-    fakeApi({ "GET /api/system/status": () => Promise.reject(new TypeError("down")) });
+    fakeApi({
+      "GET /api/system/status": () => Promise.reject(new TypeError("down")),
+    });
     render(<App />);
 
     expect(await screen.findByText("API unreachable")).toBeInTheDocument();
@@ -484,9 +544,14 @@ describe("status bar", () => {
     });
     render(<App />);
 
+    await openServices();
     await userEvent.click(screen.getByRole("button", { name: "Run test job" }));
 
-    expect(await screen.findByText(/Test job finished/, undefined, { timeout: 3000 })).toBeVisible();
+    expect(
+      await screen.findByText(/Test job finished/, undefined, {
+        timeout: 3000,
+      }),
+    ).toBeVisible();
   });
 
   it("reports a failed test job", async () => {
@@ -500,6 +565,7 @@ describe("status bar", () => {
     });
     render(<App />);
 
+    await openServices();
     await userEvent.click(screen.getByRole("button", { name: "Run test job" }));
 
     expect(await screen.findByText("Test job failed: boom")).toBeInTheDocument();
@@ -545,7 +611,9 @@ describe("approval card", () => {
     render(<App />);
     await say("book it");
 
-    const card = await screen.findByRole("region", { name: "Confirm this booking" });
+    const card = await screen.findByRole("region", {
+      name: "Confirm this booking",
+    });
     expect(within(card).getByText("Sharma Plumbing")).toBeInTheDocument();
     expect(within(card).getByText("Thu 05/11/2026, 09:00")).toBeInTheDocument();
     expect(within(card).getByText("₹1,200")).toBeInTheDocument();
@@ -563,7 +631,9 @@ describe("approval card", () => {
     render(<App />);
     await say("cancel my booking");
 
-    const card = await screen.findByRole("region", { name: "Cancel this booking?" });
+    const card = await screen.findByRole("region", {
+      name: "Cancel this booking?",
+    });
     expect(within(card).getByText("Thu 05/11/2026, 09:00")).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Confirm" })).toBeInTheDocument();
   });
@@ -584,7 +654,9 @@ describe("approval card", () => {
     render(<App />);
     await say("move it");
 
-    const card = await screen.findByRole("region", { name: "Move this booking?" });
+    const card = await screen.findByRole("region", {
+      name: "Move this booking?",
+    });
     expect(within(card).getByText("Now")).toBeInTheDocument();
     expect(within(card).getByText("Tue 03/11/2026, 10:00")).toBeInTheDocument();
     expect(within(card).getByText("Move to")).toBeInTheDocument();
@@ -612,7 +684,12 @@ describe("approval card", () => {
     const calls = fakeApi({
       ...withCard,
       "POST /api/approvals/approval-1/reject": () => ({
-        json: { ...DECISION, status: "rejected", outcome: "needs_input", reply: "I did not book it." },
+        json: {
+          ...DECISION,
+          status: "rejected",
+          outcome: "needs_input",
+          reply: "I did not book it.",
+        },
       }),
     });
     render(<App />);
@@ -631,8 +708,25 @@ describe("approval card", () => {
       "POST /api/chat": () => {
         turn += 1;
         return turn === 1
-          ? { json: { run_id: "run-1", session_id: "s", outcome: "awaiting_approval", reason: null, reply: "Confirm?", approval: CARD } }
-          : { json: { run_id: "run-2", session_id: "s", outcome: "needs_input", reason: null, reply: "Which day instead?" } };
+          ? {
+              json: {
+                run_id: "run-1",
+                session_id: "s",
+                outcome: "awaiting_approval",
+                reason: null,
+                reply: "Confirm?",
+                approval: CARD,
+              },
+            }
+          : {
+              json: {
+                run_id: "run-2",
+                session_id: "s",
+                outcome: "needs_input",
+                reason: null,
+                reply: "Which day instead?",
+              },
+            };
       },
     });
     render(<App />);
@@ -648,52 +742,51 @@ describe("approval card", () => {
     fakeApi({
       ...withCard,
       "POST /api/approvals/approval-1/confirm": () => ({ json: DECISION }),
-      "GET /api/notifications?user_id=demo-user&session_id=session-1&after=0": () => ({
-        json: {
-          notifications: [
-            {
-              id: 7,
-              kind: "booking_verified",
-              text: "Booked and verified with the provider.",
-              data: { run_id: "run-2" },
-              created_at: "2026-11-03T10:00:00+00:00",
-            },
-          ],
-        },
-      }),
     });
     render(<App />);
     await say("book it");
     await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await screen.findByText(DECISION.reply);
+    act(() =>
+      pushNotification({
+        id: 7,
+        kind: "booking_verified",
+        text: "Booked and verified with the provider.",
+        data: { run_id: "run-2" },
+        created_at: "2026-11-03T10:00:00+00:00",
+      }),
+    );
 
-    expect(
-      await screen.findByText("Booked and verified with the provider.", {}, { timeout: 4000 }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Booked and verified with the provider.")).toBeInTheDocument();
   });
 
   it("shows a new card that arrives from the saga, and only that one can be answered", async () => {
     fakeApi({
       ...withCard,
       "POST /api/approvals/approval-1/confirm": () => ({ json: DECISION }),
-      "GET /api/notifications?user_id=demo-user&session_id=session-1&after=0": () => ({
-        json: {
-          notifications: [
-            {
-              id: 8,
-              kind: "booking_price_changed",
-              text: "The price changed. Nothing was booked.",
-              data: { approval: { ...CARD, approval_id: "approval-2", price: 1700, notes: [] } },
-              created_at: "2026-11-03T10:00:00+00:00",
-            },
-          ],
-        },
-      }),
     });
     render(<App />);
     await say("book it");
     await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+    await screen.findByText(DECISION.reply);
+    act(() =>
+      pushNotification({
+        id: 8,
+        kind: "booking_price_changed",
+        text: "The price changed. Nothing was booked.",
+        data: {
+          approval: {
+            ...CARD,
+            approval_id: "approval-2",
+            price: 1700,
+            notes: [],
+          },
+        },
+        created_at: "2026-11-03T10:00:00+00:00",
+      }),
+    );
 
-    expect(await screen.findByText("₹1,700", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByText("₹1,700")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Confirm" })).toHaveLength(1);
   });
 });
@@ -707,7 +800,14 @@ describe("after a reload", () => {
   const currentRoute = "GET /api/bookings/current?user_id=demo-user&session_id=session-1";
 
   it("shows an open card this page never received", async () => {
-    stored([{ id: "1", role: "agent", text: "Please confirm the card.", runId: "run-1" }]);
+    stored([
+      {
+        id: "1",
+        role: "agent",
+        text: "Please confirm the card.",
+        runId: "run-1",
+      },
+    ]);
     fakeApi({
       ...STATUS_OK,
       "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
@@ -715,14 +815,23 @@ describe("after a reload", () => {
     });
     render(<App />);
 
-    const card = await screen.findByRole("region", { name: "Confirm this booking" });
+    const card = await screen.findByRole("region", {
+      name: "Confirm this booking",
+    });
     expect(within(card).getByText("Sharma Plumbing")).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Confirm" })).toBeEnabled();
   });
 
   it("does not show a card twice", async () => {
     stored([
-      { id: "1", role: "agent", text: "Confirm?", runId: "run-1", approval: CARD, approvalOpen: true },
+      {
+        id: "1",
+        role: "agent",
+        text: "Confirm?",
+        runId: "run-1",
+        approval: CARD,
+        approvalOpen: true,
+      },
     ]);
     const calls = fakeApi({
       ...STATUS_OK,
@@ -738,7 +847,14 @@ describe("after a reload", () => {
 
   it("closes a stored card the server no longer has open", async () => {
     stored([
-      { id: "1", role: "agent", text: "Confirm?", runId: "run-1", approval: CARD, approvalOpen: true },
+      {
+        id: "1",
+        role: "agent",
+        text: "Confirm?",
+        runId: "run-1",
+        approval: CARD,
+        approvalOpen: true,
+      },
     ]);
     fakeApi({
       ...STATUS_OK,
@@ -757,25 +873,106 @@ describe("after a reload", () => {
       ...STATUS_OK,
       "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
       [currentRoute]: () => ({ json: { approval: null, attempt_open: true } }),
-      "GET /api/notifications?user_id=demo-user&session_id=session-1&after=0": () => ({
-        json: {
-          notifications: [
-            {
-              id: 9,
-              kind: "booking_verified",
-              text: "Booked and verified with the provider.",
-              data: {},
-              created_at: "2026-11-03T10:00:00+00:00",
-            },
-          ],
-        },
-      }),
     });
     render(<App />);
+    act(() =>
+      pushNotification({
+        id: 9,
+        kind: "booking_verified",
+        text: "Booked and verified with the provider.",
+        data: {},
+        created_at: "2026-11-03T10:00:00+00:00",
+      }),
+    );
 
-    expect(
-      await screen.findByText("Booked and verified with the provider.", {}, { timeout: 4000 }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Booked and verified with the provider.")).toBeInTheDocument();
+  });
+});
+
+describe("news from the server", () => {
+  const CANCELLED = {
+    id: 20,
+    kind: "provider_cancelled",
+    text: "The provider cancelled your booking.",
+    data: { proactive: true, run_id: "run-9" },
+  };
+
+  beforeEach(() => {
+    fakeApi({
+      ...STATUS_OK,
+      "GET /api/runs/run-9/trace": () => ({ json: traceFor("run-9") }),
+    });
+  });
+
+  it("connects from the stored cursor, so a reload replays only what it missed", async () => {
+    localStorage.setItem(
+      "errand.chat.v1",
+      JSON.stringify({
+        sessionId: "session-1",
+        messages: [],
+        lastNotificationId: 12,
+      }),
+    );
+    render(<App />);
+    expect(FakeEventSource.instances[0].url).toBe("/api/events?user_id=demo-user&after=12");
+    act(() => pushNotification({ ...CANCELLED, id: 12 }));
+    expect(screen.queryByText(CANCELLED.text)).not.toBeInTheDocument();
+    act(() => pushNotification({ ...CANCELLED, id: 13 }));
+    act(() => pushNotification({ ...CANCELLED, id: 13 }));
+    expect(within(chatRegion()).getAllByText(CANCELLED.text)).toHaveLength(1);
+  });
+
+  it("ignores routine news from another chat, and offers to open a provider's cancel", async () => {
+    localStorage.setItem(
+      "errand.chat.v1",
+      JSON.stringify({ sessionId: "session-2", messages: [] }),
+    );
+    render(<App />);
+    act(() =>
+      pushNotification({
+        id: 19,
+        kind: "booking_verified",
+        text: "Booked.",
+        data: {},
+      }),
+    );
+    expect(screen.queryByText("Booked.")).not.toBeInTheDocument();
+
+    act(() => pushNotification(CANCELLED));
+    await userEvent.click(await screen.findByRole("button", { name: "Open that chat" }));
+
+    expect(within(chatRegion()).getByText(CANCELLED.text)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open that chat" })).not.toBeInTheDocument();
+    expect(screen.getByText("Session session-")).toBeInTheDocument();
+  });
+
+  it("closes a card that a provider's cancel made useless", async () => {
+    const card = { ...CARD, approval_id: "approval-7" };
+    localStorage.setItem(
+      "errand.chat.v1",
+      JSON.stringify({
+        sessionId: "session-1",
+        messages: [
+          {
+            id: "c",
+            role: "agent",
+            text: "Check.",
+            approval: card,
+            approvalOpen: true,
+          },
+        ],
+      }),
+    );
+    render(<App />);
+    act(() =>
+      pushNotification({
+        ...CANCELLED,
+        data: { proactive: true, closed_cards: ["approval-7"] },
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument(),
+    );
   });
 });
 
@@ -801,9 +998,13 @@ describe("memory panel", () => {
   const LIST = "GET /api/memories?user_id=demo-user";
 
   it("shows what is known, and marks what is not used", async () => {
-    fakeApi({ ...STATUS_OK, [LIST]: () => ({ json: { memories: [SAID, GUESS] } }) });
+    fakeApi({
+      ...STATUS_OK,
+      [LIST]: () => ({ json: { memories: [SAID, GUESS] } }),
+    });
     render(<App />);
 
+    await openPanel("Memory");
     const panel = screen.getByRole("region", { name: "Memory" });
     expect(await within(panel).findByText("Indiranagar")).toBeInTheDocument();
     expect(within(panel).getByText("You said this")).toBeInTheDocument();
@@ -815,11 +1016,19 @@ describe("memory panel", () => {
     const calls = fakeApi({
       ...STATUS_OK,
       [LIST]: () => ({ json: { memories: [SAID, GUESS] } }),
-      "POST /api/memories/m2/confirm": () => ({ json: { ...GUESS, confirmed: true } }),
-      "PUT /api/memories/m1": () => ({ json: { ...SAID, value: "Whitefield" } }),
-      "DELETE /api/memories/m1?user_id=demo-user": () => ({ json: null, status: 200 }),
+      "POST /api/memories/m2/confirm": () => ({
+        json: { ...GUESS, confirmed: true },
+      }),
+      "PUT /api/memories/m1": () => ({
+        json: { ...SAID, value: "Whitefield" },
+      }),
+      "DELETE /api/memories/m1?user_id=demo-user": () => ({
+        json: null,
+        status: 200,
+      }),
     });
     render(<App />);
+    await openPanel("Memory");
     const panel = screen.getByRole("region", { name: "Memory" });
     await within(panel).findByText("Indiranagar");
 
@@ -831,7 +1040,8 @@ describe("memory panel", () => {
     );
     await waitFor(() => expect(calls.filter((call) => call.key === LIST)).toHaveLength(2));
 
-    await userEvent.click(within(panel).getAllByRole("button", { name: "Correct" })[0]);
+    // What waits for an answer comes first, so the trusted memory is second.
+    await userEvent.click(within(panel).getAllByRole("button", { name: "Correct" })[1]);
     const input = within(panel).getByLabelText("New value for area");
     await userEvent.clear(input);
     await userEvent.type(input, "Whitefield");
@@ -844,7 +1054,7 @@ describe("memory panel", () => {
     );
     await waitFor(() => expect(within(panel).queryByRole("button", { name: "Save" })).toBeNull());
 
-    await userEvent.click(within(panel).getAllByRole("button", { name: "Forget" })[0]);
+    await userEvent.click(within(panel).getAllByRole("button", { name: "Forget" })[1]);
     await waitFor(() =>
       expect(calls.some((call) => call.key === "DELETE /api/memories/m1?user_id=demo-user")).toBe(
         true,
@@ -876,14 +1086,18 @@ describe("memory panel", () => {
         memory: { saved: [SAID], to_confirm: [GUESS] },
       }),
       "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
-      "POST /api/memories/m2/confirm": () => ({ json: { ...GUESS, confirmed: true } }),
+      "POST /api/memories/m2/confirm": () => ({
+        json: { ...GUESS, confirmed: true },
+      }),
     });
     render(<App />);
 
     await say("I live in Indiranagar");
     const chat = screen.getByRole("region", { name: "Chat" });
     expect(await within(chat).findByText("Remembered area: Indiranagar")).toBeInTheDocument();
-    const question = within(chat).getByRole("region", { name: "Remember this?" });
+    const question = within(chat).getByRole("region", {
+      name: "Remember this?",
+    });
     expect(within(question).getByText("Hindi")).toBeInTheDocument();
 
     const before = calls.filter((call) => call.key === LIST).length;
@@ -919,5 +1133,241 @@ describe("memory panel", () => {
     await within(chat).findByText("Reply 2.");
     expect(within(chat).queryByRole("region", { name: "Remember this?" })).toBeNull();
     expect(calls.some((call) => call.key.startsWith("DELETE"))).toBe(false);
+  });
+});
+
+describe("panels in the top bar", () => {
+  it("keeps both closed until asked, and shows one at a time", async () => {
+    fakeApi({ ...STATUS_OK, "GET /api/memories?user_id=demo-user": () => ({ json: { memories: [] } }) });
+    render(<App />);
+    expect(screen.queryByRole("region", { name: "Run trace" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Memory" })).toBeNull();
+
+    await openPanel("Trace");
+    expect(screen.getByRole("region", { name: "Run trace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Trace" })).toHaveAttribute("aria-expanded", "true");
+
+    await openPanel("Memory");
+    expect(screen.getByRole("region", { name: "Memory" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Run trace" })).toBeNull();
+
+    await openPanel("Memory");
+    expect(screen.queryByRole("region", { name: "Memory" })).toBeNull();
+
+    await openPanel("Trace");
+    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    expect(screen.queryByRole("region", { name: "Run trace" })).toBeNull();
+  });
+
+  it("opens the trace from a reply", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply("run-1", "Done."),
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+    });
+    render(<App />);
+    await say("hello");
+    await screen.findByText("Done.");
+    expect(screen.queryByRole("region", { name: "Run trace" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "View trace" }));
+
+    expect(await screen.findByText("Run run-1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View trace" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("shows how many memories there are, without opening the panel", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "GET /api/memories?user_id=demo-user": () => ({
+        json: {
+          memories: [
+            { id: "m1", key: "area", value: "HSR", scope: "all", source: "explicit", confirmed: true },
+            { id: "m2", key: "pet", value: "Dog", scope: "all", source: "inferred", confirmed: false },
+          ],
+        },
+      }),
+    });
+    render(<App />);
+    const button = screen.getByRole("button", { name: "Memory" });
+    expect(await within(button).findByText("2")).toHaveClass("attention");
+  });
+});
+
+describe("agent replies", () => {
+  it("renders formatting, but never a link or an image from the model", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply(
+        "run-1",
+        "**Sharma Plumbing** is best.\n\n[Pay here](https://evil.example) ![x](https://evil.example/a.png)",
+      ),
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+    });
+    render(<App />);
+    await say("find one");
+
+    const name = await screen.findByText("Sharma Plumbing");
+    expect(name.tagName).toBe("STRONG");
+    expect(screen.getByText(/Pay here/)).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("does not format what the user typed", async () => {
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": reply("run-1", "Done."),
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+    });
+    render(<App />);
+    await say("**plain**");
+    expect(await within(chatRegion()).findByText("**plain**")).toBeInTheDocument();
+  });
+});
+
+describe("previous chats", () => {
+  function twoChats() {
+    let turn = 0;
+    return fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": () => {
+        turn += 1;
+        return { json: { run_id: `run-${turn}`, session_id: `session-${turn}`, outcome: "done", reason: null, reply: `Reply ${turn}` } };
+      },
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+      "GET /api/runs/run-2/trace": () => ({ json: traceFor("run-2") }),
+    });
+  }
+
+  async function startTwoChats() {
+    render(<App />);
+    await say("first chat");
+    await screen.findByText("Reply 1");
+    await userEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await say("second chat");
+    await screen.findByText("Reply 2");
+    return screen.getByRole("navigation", { name: "Previous chats" });
+  }
+
+  it("lists each chat, newest first, and marks the open one", async () => {
+    twoChats();
+    const recents = await startTwoChats();
+    const rows = within(recents).getAllByRole("button");
+    expect(rows.map((row) => row.textContent)).toEqual(["second chat", "first chat"]);
+    expect(rows[0]).toHaveAttribute("aria-current", "page");
+  });
+
+  it("reopens a chat with its messages and carries on in its own session", async () => {
+    const calls = twoChats();
+    const recents = await startTwoChats();
+
+    await userEvent.click(within(recents).getByRole("button", { name: "first chat" }));
+
+    expect(within(chatRegion()).getByText("Reply 1")).toBeInTheDocument();
+    expect(within(chatRegion()).queryByText("Reply 2")).toBeNull();
+    expect(screen.getByRole("heading", { name: "first chat" })).toBeInTheDocument();
+    // This browser's copy may be behind, so the server says which card is open.
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.key === "GET /api/bookings/current?user_id=demo-user&session_id=session-1",
+        ),
+      ).toBe(true),
+    );
+
+    await say("more");
+    await waitFor(() => {
+      const last = calls.filter((call) => call.key === "POST /api/chat").at(-1);
+      expect(last?.body).toEqual({ user_id: "demo-user", session_id: "session-1", message: "more" });
+    });
+  });
+
+  it("survives a reload", async () => {
+    twoChats();
+    await startTwoChats();
+    cleanup();
+
+    render(<App />);
+    const recents = screen.getByRole("navigation", { name: "Previous chats" });
+    expect(within(recents).getByRole("button", { name: "first chat" })).toBeInTheDocument();
+    expect(within(recents).getByRole("button", { name: "second chat" })).toBeInTheDocument();
+  });
+
+  it("adds a chat stored before the list existed", () => {
+    fakeApi(STATUS_OK);
+    localStorage.setItem(
+      "errand.chat.v1",
+      JSON.stringify({
+        sessionId: "session-old",
+        messages: [{ id: "a", role: "user", text: "old chat" }],
+      }),
+    );
+    render(<App />);
+    const recents = screen.getByRole("navigation", { name: "Previous chats" });
+    expect(within(recents).getByRole("button", { name: "old chat" })).toBeInTheDocument();
+  });
+
+  it("does not switch chats while a reply is on its way", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    const pending = new Promise((resolve) => {
+      finish = resolve;
+    });
+    let turn = 0;
+    fakeApi({
+      ...STATUS_OK,
+      "POST /api/chat": () => {
+        turn += 1;
+        const body = { json: { run_id: `run-${turn}`, session_id: `session-${turn}`, outcome: "done", reason: null, reply: `Reply ${turn}` } };
+        return turn === 1 ? body : (pending.then(() => body) as never);
+      },
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+    });
+    render(<App />);
+    await say("first chat");
+    await screen.findByText("Reply 1");
+    await userEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await say("second chat");
+
+    const recents = screen.getByRole("navigation", { name: "Previous chats" });
+    expect(within(recents).getByRole("button", { name: "first chat" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
+    await act(async () => finish(null));
+  });
+
+  it("keeps routine news with its own chat, for when it is opened", async () => {
+    twoChats();
+    const recents = await startTwoChats();
+
+    act(() =>
+      pushNotification({ id: 30, session_id: "session-1", kind: "booking_verified", text: "Booked." }),
+    );
+    expect(screen.queryByText("Booked.")).toBeNull();
+
+    await userEvent.click(within(recents).getByRole("button", { name: "first chat" }));
+    expect(within(chatRegion()).getByText("Booked.")).toBeInTheDocument();
+  });
+
+  it("opens a stored chat in full from a provider's cancel", async () => {
+    twoChats();
+    await startTwoChats();
+
+    act(() =>
+      pushNotification({
+        id: 31,
+        session_id: "session-1",
+        kind: "provider_cancelled",
+        text: "The provider cancelled.",
+        data: { proactive: true },
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Open that chat" }));
+
+    expect(within(chatRegion()).getByText("Reply 1")).toBeInTheDocument();
+    expect(within(chatRegion()).getByText("The provider cancelled.")).toBeInTheDocument();
   });
 });

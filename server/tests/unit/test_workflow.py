@@ -49,6 +49,8 @@ def test_every_state_has_a_row() -> None:
         (S.VERIFYING, S.EXECUTING),
         (S.DONE, S.DISRUPTED),
         (S.DISRUPTED, S.COMPARING),
+        # A blank errand gives way when a provider cancel reopens an older one.
+        (S.INTAKE, S.DONE),
         (S.LIMIT_REACHED, S.INTAKE),
     ],
 )
@@ -66,7 +68,6 @@ def test_legal_moves_pass(current: S, target: S) -> None:
         # Nothing may report success without the status check.
         (S.EXECUTING, S.DONE),
         (S.AWAITING_APPROVAL, S.DONE),
-        (S.INTAKE, S.DONE),
         # A booking in flight cannot be abandoned or interrupted by a run limit.
         (S.EXECUTING, S.INTAKE),
         (S.EXECUTING, S.LIMIT_REACHED),
@@ -81,9 +82,19 @@ def test_illegal_moves_raise(current: S, target: S) -> None:
         check_transition(current, target)
 
 
-def test_only_verifying_reaches_done() -> None:
+def test_only_verifying_and_a_blank_intake_reach_done() -> None:
     reaches_done = {state for state, targets in TRANSITIONS.items() if S.DONE in targets}
-    assert reaches_done == {S.VERIFYING}
+    assert reaches_done == {S.VERIFYING, S.INTAKE}
+
+
+def test_nothing_that_executed_reaches_done_without_verifying() -> None:
+    seen: set[S] = set()
+    queue = [S.EXECUTING]
+    while queue:
+        for target in TRANSITIONS[queue.pop()] - {S.VERIFYING} - seen:
+            seen.add(target)
+            queue.append(target)
+    assert S.DONE not in seen
 
 
 def test_only_approval_reaches_executing_for_the_first_time() -> None:

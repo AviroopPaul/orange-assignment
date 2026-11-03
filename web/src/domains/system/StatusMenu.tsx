@@ -1,5 +1,7 @@
+import { ChevronDown, Play } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { Button, Popover } from "../../components/ui";
 import { ApiError, request } from "../../lib/api";
 
 export interface SystemStatus {
@@ -74,10 +76,21 @@ async function runTestJob(): Promise<string> {
   return `Test job is still ${ping.status} after 15 s. It will finish when the worker recovers.`;
 }
 
-export function StatusBar() {
+/** The top bar names what is wrong, so a failure shows without opening the list. */
+function summarize(status: SystemStatus | "unreachable" | null): { text: string; down: boolean } {
+  if (status === null) return { text: "Checking services", down: false };
+  if (status === "unreachable") return { text: "API unreachable", down: true };
+  const down = SERVICES.filter(({ key }) => !status[key]);
+  if (down.length === 0) return { text: "All services up", down: false };
+  if (down.length === 1) return { text: `${down[0].label} is down`, down: true };
+  return { text: `${down.length} services down`, down: true };
+}
+
+export function StatusMenu() {
   const status = useSystemStatus();
   const [jobResult, setJobResult] = useState<string | null>(null);
   const [jobRunning, setJobRunning] = useState(false);
+  const summary = summarize(status);
 
   const onRunJob = useCallback(async () => {
     setJobRunning(true);
@@ -92,8 +105,23 @@ export function StatusBar() {
   }, []);
 
   return (
-    <header className="status-bar">
-      <h1>Errand Agent</h1>
+    <Popover
+      trigger={({ open, toggle }) => (
+        <button
+          type="button"
+          className={`status-trigger ${summary.down ? "down" : "up"}`}
+          aria-label={summary.text}
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          <span className="dot" aria-hidden="true" />
+          <span className="status-text">{summary.text}</span>
+          <ChevronDown size={14} aria-hidden="true" />
+        </button>
+      )}
+    >
+      <h3 className="popover-title">Services</h3>
+      {status === null && <p className="popover-note">Checking services…</p>}
       <ul className="services" aria-label="Service status">
         {status === "unreachable" && (
           <li className="service down">
@@ -118,20 +146,15 @@ export function StatusBar() {
         )}
       </ul>
       <div className="job-check">
-        {jobResult && (
-          <span className="job-result" role="status">
-            {jobResult}
-          </span>
-        )}
-        <button
-          type="button"
-          className="button quiet"
-          onClick={() => void onRunJob()}
-          disabled={jobRunning}
-        >
+        <Button size="sm" icon={Play} onClick={() => void onRunJob()} disabled={jobRunning}>
           {jobRunning ? "Running…" : "Run test job"}
-        </button>
+        </Button>
+        {jobResult && (
+          <p className="job-result" role="status">
+            {jobResult}
+          </p>
+        )}
       </div>
-    </header>
+    </Popover>
   );
 }
