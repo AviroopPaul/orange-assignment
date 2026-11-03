@@ -27,9 +27,11 @@ name = only the agent domain imports ADK
 type = forbidden
 source_modules =
     app.core
+    app.domains.bookings
     app.domains.chat
     app.domains.gateway
     app.domains.jobs
+    app.domains.notifications
     app.domains.system
     app.domains.tracing
     app.domains.workflow
@@ -43,7 +45,9 @@ type = forbidden
 source_modules = app.domains.gateway
 forbidden_modules =
     app.domains.agent
+    app.domains.bookings
     app.domains.chat
+    app.domains.notifications
     app.domains.system
     app.domains.jobs
     app.domains.workflow
@@ -54,7 +58,19 @@ type = forbidden
 source_modules = app.domains.jobs
 forbidden_modules =
     app.domains.agent
+    app.domains.bookings
     app.domains.chat
     app.domains.gateway
+    app.domains.notifications
     app.domains.system
     app.domains.tracing
+
+[importlinter:contract:bookings-are-below-the-model]
+name = bookings know nothing of chat or the agent
+type = forbidden
+source_modules =
+    app.domains.bookings
+    app.domains.notifications
+forbidden_modules =
+    app.domains.agent
+    app.domains.chat

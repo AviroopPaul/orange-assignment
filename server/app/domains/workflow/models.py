@@ -50,5 +50,7 @@ class Workflow(Base):
     request: Mapped[dict] = mapped_column(JsonColumn, default=dict)
     # What the user really wrote, kept to check that saved details are grounded in it.
     user_text: Mapped[str] = mapped_column(Text, default="")
+    # The last search after hard limits, by provider ID. A proposal must come from this.
+    shortlist: Mapped[dict] = mapped_column(JsonColumn, default=dict)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime)

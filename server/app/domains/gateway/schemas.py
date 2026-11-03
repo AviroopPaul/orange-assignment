@@ -100,6 +100,11 @@ class UpdateRequestArgs(_Strict):
     clear_fields: list[str] | None = Field(default=None, max_length=8)
 
 
+class ProposeBookingArgs(_Strict):
+    provider_id: str = Field(min_length=1, max_length=20)
+    slot: str = Field(min_length=1, max_length=40)
+
+
 class ResolveDatesArgs(_Strict):
     phrase: str = Field(min_length=1, max_length=100)
 

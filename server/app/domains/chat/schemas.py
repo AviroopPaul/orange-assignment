@@ -3,7 +3,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.\-]{1,64}$"
+from app.core.identifiers import IDENTIFIER_PATTERN
+from app.domains.bookings.schemas import ApprovalCard
 
 
 class Outcome(StrEnum):
@@ -46,3 +47,5 @@ class ChatResponse(BaseModel):
     reason: FailureReason | None = None
     retry_after_s: int | None = None
     reply: str
+    # Shown beside the reply. Built by code from the approval row, never from the model's text.
+    approval: ApprovalCard | None = None

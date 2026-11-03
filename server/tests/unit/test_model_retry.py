@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.core.database import Database
 from app.domains.agent.llm import build_model, build_request_config
 from app.domains.agent.runtime import AdkAgentRuntime
+from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import ModelRateLimited, ModelUnavailable
 from app.domains.gateway.service import ToolGateway
 from app.domains.tracing.service import TraceService
@@ -58,6 +59,7 @@ async def stub() -> AsyncIterator[StubModelServer]:
 
 
 async def run_turn(
+    bookings: ApprovalService,
     stub: StubModelServer,
     db: Database,
     clock: FakeClock,
@@ -72,6 +74,7 @@ async def run_turn(
         InMemorySessionService(),
         gateway,
         workflow,
+        bookings,
         max_model_calls=8,
         max_tool_calls=12,
         today=lambda: clock.now().date(),
@@ -83,6 +86,7 @@ async def run_turn(
 
 @pytest.mark.parametrize("status", [503, 504])
 async def test_retryable_status_gets_exactly_one_retry(
+    bookings: ApprovalService,
     stub: StubModelServer,
     db: Database,
     clock: FakeClock,
@@ -92,11 +96,12 @@ async def test_retryable_status_gets_exactly_one_retry(
 ) -> None:
     stub.status = status
     with pytest.raises(ModelUnavailable):
-        await run_turn(stub, db, clock, gateway, workflow)
+        await run_turn(bookings, stub, db, clock, gateway, workflow)
     assert stub.attempts == 2
 
 
 async def test_rate_limit_waits_as_long_as_gemini_asks_then_tries_once_more(
+    bookings: ApprovalService,
     stub: StubModelServer,
     db: Database,
     clock: FakeClock,
@@ -107,13 +112,14 @@ async def test_rate_limit_waits_as_long_as_gemini_asks_then_tries_once_more(
     stub.retry_delay = "1.5s"
     started = time.monotonic()
     with pytest.raises(ModelRateLimited) as caught:
-        await run_turn(stub, db, clock, gateway, workflow)
+        await run_turn(bookings, stub, db, clock, gateway, workflow)
     assert time.monotonic() - started >= 1.5
     assert stub.attempts == 2
     assert caught.value.retry_after_s == 1.5
 
 
 async def test_rate_limit_with_no_stated_delay_still_retries_once(
+    bookings: ApprovalService,
     stub: StubModelServer,
     db: Database,
     clock: FakeClock,
@@ -122,12 +128,13 @@ async def test_rate_limit_with_no_stated_delay_still_retries_once(
 ) -> None:
     stub.status = 429
     with pytest.raises(ModelRateLimited) as caught:
-        await run_turn(stub, db, clock, gateway, workflow)
+        await run_turn(bookings, stub, db, clock, gateway, workflow)
     assert stub.attempts == 2
     assert caught.value.retry_after_s is None
 
 
 async def test_long_rate_limit_is_not_waited_for(
+    bookings: ApprovalService,
     stub: StubModelServer,
     db: Database,
     clock: FakeClock,
@@ -139,13 +146,14 @@ async def test_long_rate_limit_is_not_waited_for(
     stub.retry_delay = "45s"
     started = time.monotonic()
     with pytest.raises(ModelRateLimited) as caught:
-        await run_turn(stub, db, clock, gateway, workflow)
+        await run_turn(bookings, stub, db, clock, gateway, workflow)
     assert time.monotonic() - started < 5
     assert stub.attempts == 1
     assert caught.value.retry_after_s == 45
 
 
 async def test_permanent_error_is_not_retried(
+    bookings: ApprovalService,
     stub: StubModelServer,
     db: Database,
     clock: FakeClock,
@@ -154,5 +162,5 @@ async def test_permanent_error_is_not_retried(
 ) -> None:
     stub.status = 404
     with pytest.raises(ModelUnavailable):
-        await run_turn(stub, db, clock, gateway, workflow)
+        await run_turn(bookings, stub, db, clock, gateway, workflow)
     assert stub.attempts == 1

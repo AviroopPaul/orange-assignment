@@ -431,9 +431,12 @@ async def test_search_cannot_interrupt_a_booking_in_flight(
 ) -> None:
     await make_ready(workflow, USER, SESSION)
     await _force_state(db, S.EXECUTING)
-    with pytest.raises(IllegalTransition):
-        await workflow.begin_search(USER, SESSION)
+    await workflow.begin_search(USER, SESSION)
     assert (await workflow.snapshot(USER, SESSION)).state == S.EXECUTING
+    guard = WorkflowSearchGuard(workflow, USER, SESSION)
+    blocked = await guard.check("search_providers", {})
+    assert blocked is not None
+    assert "booking is in progress" in blocked[1]
 
 
 @pytest.mark.parametrize("state", [S.EXECUTING, S.VERIFYING])
@@ -508,90 +511,96 @@ async def test_guard_only_concerns_search(workflow: WorkflowService) -> None:
     assert await guard.check("get_provider", {"provider_id": "plm-01"}) is None
 
 
-# Dates: propose, then the user confirms
+# Dates: clear words are saved, and shown back to the user
 
 
 async def asked(workflow: WorkflowService, words: str = "I need it on Saturday") -> None:
     await workflow.record_user_message(USER, SESSION, words)
 
 
-async def test_proposed_dates_do_not_count_until_confirmed(workflow: WorkflowService) -> None:
+async def test_clear_dates_are_saved_with_no_question(
+    workflow: WorkflowService, db: Database
+) -> None:
     await asked(workflow)
     result = await workflow.resolve_dates(USER, SESSION, "Saturday")
 
-    assert result["needs_confirmation"] is True
+    assert result["saved"] is True
     assert result["dates"] == "This Saturday (07/11/2026)"
-    snapshot = await workflow.snapshot(USER, SESSION)
-    assert "start_date" in snapshot.missing_required
-    assert "start_date" not in snapshot.details
-    assert snapshot.pending_dates is not None
-
-
-async def test_yes_on_the_next_message_saves_them(workflow: WorkflowService, db: Database) -> None:
-    await asked(workflow)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
-    await workflow.note_date_question(USER, SESSION, asked_alone=True)
-    await workflow.record_user_message(USER, SESSION, "yes")
-
     snapshot = await workflow.snapshot(USER, SESSION)
     assert snapshot.details["start_date"] == "2026-11-07"
     assert snapshot.details["end_date"] == "2026-11-07"
-    assert snapshot.pending_dates is None
+    assert "start_date" not in snapshot.missing_required
     async with db.session_scope() as session:
         row = await WorkflowRepository(session).get_active(USER, SESSION)
     assert row is not None
-    assert row.request["start_date"]["source"] == "user_confirmed"
+    assert row.request["start_date"]["source"] == "user"
 
 
-async def test_no_clears_the_proposal(workflow: WorkflowService) -> None:
+async def test_saved_dates_wait_to_be_shown_until_a_reply_shows_them(
+    workflow: WorkflowService,
+) -> None:
     await asked(workflow)
     await workflow.resolve_dates(USER, SESSION, "Saturday")
-    await workflow.note_date_question(USER, SESSION, asked_alone=True)
-    await workflow.record_user_message(USER, SESSION, "no")
+    snapshot = await workflow.snapshot(USER, SESSION)
+    assert snapshot.dates_to_show == {
+        "label": "This Saturday (07/11/2026)",
+        "shown": ["07/11/2026"],
+    }
+
+    await workflow.note_dates_shown(USER, SESSION, "This Saturday (07/11/2026)")
+    snapshot = await workflow.snapshot(USER, SESSION)
+    assert snapshot.dates_to_show is None
+    assert snapshot.details["start_date"] == "2026-11-07"
+
+
+async def test_showing_old_dates_does_not_clear_newer_ones(workflow: WorkflowService) -> None:
+    await asked(workflow, "Saturday or Sunday")
+    await workflow.resolve_dates(USER, SESSION, "Saturday")
+    await workflow.resolve_dates(USER, SESSION, "Sunday")
+
+    await workflow.note_dates_shown(USER, SESSION, "This Saturday (07/11/2026)")
 
     snapshot = await workflow.snapshot(USER, SESSION)
-    assert snapshot.pending_dates is None
-    assert "start_date" not in snapshot.details
-
-    await workflow.record_user_message(USER, SESSION, "yes")
-    assert "start_date" not in (await workflow.snapshot(USER, SESSION)).details
+    assert snapshot.dates_to_show is not None
+    assert snapshot.dates_to_show["label"] == "This Sunday (08/11/2026)"
 
 
-@pytest.mark.parametrize("message", ["yes but Sunday", "Sunday instead", "hmm", "what time?"])
-async def test_anything_unclear_leaves_it_waiting(workflow: WorkflowService, message: str) -> None:
+@pytest.mark.parametrize("message", ["yes", "no", "hmm", "not sure"])
+async def test_a_short_answer_changes_no_dates(workflow: WorkflowService, message: str) -> None:
     await asked(workflow)
     await workflow.resolve_dates(USER, SESSION, "Saturday")
     await workflow.record_user_message(USER, SESSION, message)
-
-    snapshot = await workflow.snapshot(USER, SESSION)
-    assert "start_date" not in snapshot.details
-    assert snapshot.pending_dates is not None
+    assert (await workflow.snapshot(USER, SESSION)).details["start_date"] == "2026-11-07"
 
 
-async def test_yes_with_nothing_proposed_saves_nothing(workflow: WorkflowService) -> None:
+async def test_yes_alone_saves_no_dates(workflow: WorkflowService) -> None:
     await workflow.record_user_message(USER, SESSION, "yes")
     assert (await workflow.snapshot(USER, SESSION)).details == {}
 
 
-async def test_no_date_mentioned_means_nothing_can_be_proposed(workflow: WorkflowService) -> None:
+async def test_no_date_mentioned_means_nothing_can_be_saved(workflow: WorkflowService) -> None:
     await workflow.record_user_message(USER, SESSION, "I need a plumber in Indiranagar")
     result = await workflow.resolve_dates(USER, SESSION, "tomorrow")
 
     assert result["error"] == "date_not_stated"
     assert "Ask them" in result["message"]
-    assert (await workflow.snapshot(USER, SESSION)).pending_dates is None
+    snapshot = await workflow.snapshot(USER, SESSION)
+    assert "start_date" in snapshot.missing_required
+    assert snapshot.dates_to_show is None
 
 
 async def test_words_it_cannot_resolve_ask_the_user(workflow: WorkflowService) -> None:
     await workflow.record_user_message(USER, SESSION, "I need it soon")
     result = await workflow.resolve_dates(USER, SESSION, "soon")
     assert result["error"] == "date_not_understood"
+    assert "start_date" in (await workflow.snapshot(USER, SESSION)).missing_required
 
 
 async def test_a_past_date_is_refused(workflow: WorkflowService) -> None:
     await workflow.record_user_message(USER, SESSION, "on 01/01/2026")
     result = await workflow.resolve_dates(USER, SESSION, "01/01/2026")
     assert result["error"] == "date_not_usable"
+    assert "start_date" in (await workflow.snapshot(USER, SESSION)).missing_required
 
 
 async def test_update_request_cannot_set_dates(workflow: WorkflowService) -> None:
@@ -601,7 +610,7 @@ async def test_update_request_cannot_set_dates(workflow: WorkflowService) -> Non
     assert "start_date" not in result["saved"]
 
 
-async def test_new_dates_replace_confirmed_ones_and_need_confirming_again(
+async def test_new_dates_replace_old_ones_and_old_results_stop_counting(
     workflow: WorkflowService,
 ) -> None:
     await make_ready(workflow, USER, SESSION)
@@ -611,135 +620,74 @@ async def test_new_dates_replace_confirmed_ones_and_need_confirming_again(
     await workflow.record_user_message(USER, SESSION, "actually Saturday")
     result = await workflow.resolve_dates(USER, SESSION, "Saturday")
 
-    assert result["needs_confirmation"] is True
+    assert result["saved"] is True
     snapshot = await workflow.snapshot(USER, SESSION)
     assert snapshot.state == S.INTAKE
-    assert "start_date" in snapshot.missing_required
-
-    await workflow.note_date_question(USER, SESSION, asked_alone=True)
-    await workflow.record_user_message(USER, SESSION, "yes")
-    assert (await workflow.snapshot(USER, SESSION)).details["start_date"] == "2026-11-07"
+    assert snapshot.details["start_date"] == "2026-11-07"
+    assert snapshot.missing_required == []
 
 
-async def test_resolving_the_confirmed_dates_again_asks_nothing(workflow: WorkflowService) -> None:
+async def test_a_range_can_narrow_to_one_day(workflow: WorkflowService) -> None:
+    """From the user's own chat: "this week", then "make it on friday"."""
+    await asked(workflow, "plumber this week")
+    await workflow.resolve_dates(USER, SESSION, "this week")
+    await workflow.record_user_message(USER, SESSION, "make it on friday")
+    await workflow.resolve_dates(USER, SESSION, "friday")
+
+    snapshot = await workflow.snapshot(USER, SESSION)
+    assert snapshot.details["start_date"] == "2026-11-06"
+    assert snapshot.details["end_date"] == "2026-11-06"
+
+
+async def test_resolving_the_saved_dates_again_changes_nothing(workflow: WorkflowService) -> None:
     await make_ready(workflow, USER, SESSION)
     result = await workflow.resolve_dates(USER, SESSION, "3 Nov to 5 Nov")
-    assert result["already_confirmed"] is True
+    assert result["already_saved"] is True
     assert (await workflow.snapshot(USER, SESSION)).missing_required == []
 
 
-async def test_guard_names_the_dates_still_waiting(workflow: WorkflowService) -> None:
-    await asked(workflow, "plumber in Indiranagar on Saturday")
+async def test_guard_refuses_a_search_with_no_dates(workflow: WorkflowService) -> None:
+    await asked(workflow, "plumber in Indiranagar")
     await workflow.update_request(USER, SESSION, DETAILS)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
 
     blocked = await WorkflowSearchGuard(workflow, USER, SESSION).check("search_providers", {})
     assert blocked is not None
     assert blocked[0] == RefusalReason.MISSING_DETAILS
-    assert "07/11/2026" in blocked[1]
+    assert "start_date" in blocked[1]
 
 
-async def test_prompt_shows_dates_waiting_for_confirmation(workflow: WorkflowService) -> None:
-    await asked(workflow)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
-    prompt = (await workflow.snapshot(USER, SESSION)).for_prompt()
-    assert "waiting for the user to confirm" in prompt
-    assert "07/11/2026" in prompt
-
-
-async def test_date_steps_are_traced(
+async def test_saving_dates_is_traced(
     workflow: WorkflowService, db: Database, clock: FakeClock
 ) -> None:
     traces = TraceService(db, clock)
     recorder = await traces.start_run(USER, SESSION)
     await asked(workflow)
     await workflow.resolve_dates(USER, SESSION, "Saturday", recorder)
-    await workflow.note_date_question(USER, SESSION, asked_alone=True)
-    await workflow.record_user_message(USER, SESSION, "yes", recorder)
 
     trace = await traces.get_trace(recorder.run_id)
-    assert [event.kind for event in trace.events] == ["dates_proposed", "dates_confirmed"]
-    assert "07/11/2026" in trace.events[1].data["dates"]
+    assert [event.kind for event in trace.events] == ["dates_saved"]
+    assert "07/11/2026" in trace.events[0].data["dates"]
 
 
-async def test_yes_after_another_question_does_not_confirm_and_is_flagged(
-    workflow: WorkflowService, db: Database, clock: FakeClock
-) -> None:
-    traces = TraceService(db, clock)
-    recorder = await traces.start_run(USER, SESSION)
-    await asked(workflow)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
-    await workflow.note_date_question(USER, SESSION, asked_alone=False)
-    await workflow.record_user_message(USER, SESSION, "yes", recorder)
-
-    snapshot = await workflow.snapshot(USER, SESSION)
-    assert "start_date" not in snapshot.details
-    assert snapshot.pending_dates is not None
-    assert snapshot.pending_dates["unclear"] is True
-    assert "Ask only whether these dates are okay: This Saturday (07/11/2026)" in (
-        snapshot.for_prompt()
-    )
-    trace = await traces.get_trace(recorder.run_id)
-    assert [event.kind for event in trace.events] == ["dates_unclear"]
-
-
-async def test_a_proposal_starts_as_not_yet_asked(workflow: WorkflowService) -> None:
-    """If a crash loses the note about the question, the safe answer is to ask again."""
-    await asked(workflow)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
-    await workflow.record_user_message(USER, SESSION, "yes")
-    assert "start_date" not in (await workflow.snapshot(USER, SESSION)).details
-
-
-async def test_hedged_answer_keeps_the_dates_waiting(workflow: WorkflowService) -> None:
-    await asked(workflow)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
-    await workflow.note_date_question(USER, SESSION, asked_alone=True)
-    await workflow.record_user_message(USER, SESSION, "ok I guess")
-
-    snapshot = await workflow.snapshot(USER, SESSION)
-    assert "start_date" not in snapshot.details
-    assert snapshot.pending_dates is not None and snapshot.pending_dates["unclear"] is True
-
-
-async def test_not_sure_does_not_throw_the_dates_away(workflow: WorkflowService) -> None:
-    await asked(workflow)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
-    await workflow.record_user_message(USER, SESSION, "not sure")
-    assert (await workflow.snapshot(USER, SESSION)).pending_dates is not None
-
-
-async def test_repeating_confirmed_dates_says_to_search_instead_of_refusing(
+async def test_repeating_saved_dates_says_to_search_instead_of_refusing(
     workflow: WorkflowService,
 ) -> None:
-    """Seen live: the model re-sent the date string after a yes, and then asked all over again."""
+    """Seen live: the model re-sent the date string, and then asked all over again."""
     await asked(workflow)
     await workflow.resolve_dates(USER, SESSION, "Saturday")
-    await workflow.note_date_question(USER, SESSION, asked_alone=True)
-    await workflow.record_user_message(USER, SESSION, "yes")
 
     result = await workflow.resolve_dates(USER, SESSION, "This Saturday (07/11/2026)")
 
-    assert result["already_confirmed"] is True
+    assert result["already_saved"] is True
     assert "Search now" in result["message"]
-    snapshot = await workflow.snapshot(USER, SESSION)
-    assert snapshot.details["start_date"] == "2026-11-07"
-    assert snapshot.pending_dates is None
+    assert (await workflow.snapshot(USER, SESSION)).details["start_date"] == "2026-11-07"
 
 
-async def test_repeating_waiting_dates_leaves_them_waiting(workflow: WorkflowService) -> None:
-    await asked(workflow)
-    await workflow.resolve_dates(USER, SESSION, "Saturday")
-    result = await workflow.resolve_dates(USER, SESSION, "This Saturday (07/11/2026)")
-
-    assert result["needs_confirmation"] is True
-    assert (await workflow.snapshot(USER, SESSION)).pending_dates is not None
-
-
-async def test_a_date_the_user_never_said_is_still_refused_when_others_are_waiting(
+async def test_a_date_the_user_never_said_is_still_refused_when_others_are_saved(
     workflow: WorkflowService,
 ) -> None:
     await asked(workflow)
     await workflow.resolve_dates(USER, SESSION, "Saturday")
     result = await workflow.resolve_dates(USER, SESSION, "14/11/2026")
     assert result["error"] == "date_not_stated"
+    assert (await workflow.snapshot(USER, SESSION)).details["start_date"] == "2026-11-07"

@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 
 from app.core.database import Database
 from app.core.locks import RedisTurnLock, TurnLockTimeout, TurnLockUnavailable
+from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import (
     ModelCallLimitExceeded,
     ModelRateLimited,
@@ -18,10 +19,14 @@ from app.domains.chat.ports import (
 )
 from app.domains.chat.schemas import ChatRequest, FailureReason, Outcome
 from app.domains.chat.service import FAILURE_REPLIES, ChatService
+from app.domains.gateway.client import ProviderClient
+from app.domains.gateway.service import DenyAllApprovals, ToolGateway
+from app.domains.jobs.service import JobService
+from app.domains.notifications.service import NotificationService
 from app.domains.tracing.service import RunRecorder, TraceService
 from app.domains.workflow.models import WorkflowState
 from app.domains.workflow.service import WorkflowService
-from tests.conftest import FakeClock, make_ready
+from tests.conftest import FakeClock, RecordingPublisher, make_ready
 
 
 class FakeRuntime:
@@ -69,11 +74,21 @@ def build(
     configured: bool = True,
     deadline_s: float = 5,
 ) -> ChatService:
+    workflows = WorkflowService(traces._db, traces._clock)
     return ChatService(
         runtime=runtime,
         turn_lock=lock or RedisTurnLock(redis, ttl_s=10, wait_s=0.1),  # type: ignore[arg-type]
         traces=traces,
-        workflows=WorkflowService(traces._db, traces._clock),
+        workflows=workflows,
+        bookings=ApprovalService(
+            traces._db,
+            traces._clock,
+            ToolGateway(ProviderClient("http://nowhere", 1), DenyAllApprovals(), 0),
+            workflows,
+            JobService(traces._db, RecordingPublisher(), {}, traces._clock, 45, 60, 5),
+            traces,
+            NotificationService(traces._db, traces._clock),
+        ),
         run_deadline_s=deadline_s,
         model_is_configured=configured,
     )
@@ -281,17 +296,18 @@ async def test_deadline_is_recorded_as_a_limit(
     assert (await workflow.snapshot("u1", "s1")).state == WorkflowState.LIMIT_REACHED
 
 
-class ProposingRuntime(FakeRuntime):
-    """Stands in for a model that proposed dates this turn, then wrote `result` as its reply."""
+class SavingDatesRuntime(FakeRuntime):
+    """Stands in for a model that saved dates this turn, then wrote `result` as its reply."""
 
-    def __init__(self, workflow: WorkflowService, result: str) -> None:
+    def __init__(self, workflow: WorkflowService, result: str, phrase: str = "Saturday") -> None:
         super().__init__(result)
         self.workflow = workflow
+        self.phrase = phrase
 
     async def run_turn(
         self, user_id: str, session_id: str, message: str, recorder: RunRecorder
     ) -> str:
-        await self.workflow.resolve_dates(user_id, session_id, "Saturday")
+        await self.workflow.resolve_dates(user_id, session_id, self.phrase)
         return await super().run_turn(user_id, session_id, message, recorder)
 
 
@@ -301,101 +317,59 @@ ON_SATURDAY = ChatRequest(user_id="u1", session_id="s1", message="A plumber on S
 async def test_user_always_sees_the_dates_even_if_the_model_leaves_them_out(
     traces: TraceService, redis: Redis, workflow: WorkflowService
 ) -> None:
-    runtime = ProposingRuntime(workflow, "Thanks. What is your budget?")
+    runtime = SavingDatesRuntime(workflow, "Thanks. What is your budget?")
     response = await build(runtime, traces, redis).handle_message(ON_SATURDAY)
 
-    assert response.reply.startswith("Thanks. What is your budget?")
-    assert "(07/11/2026)" in response.reply
+    assert response.reply == ("Dates: This Saturday (07/11/2026).\n\nThanks. What is your budget?")
     assert response.outcome == Outcome.NEEDS_INPUT
 
 
-async def test_date_question_is_not_repeated_if_the_model_asked_it(
+async def test_a_reply_that_shows_the_dates_is_left_as_written(
     traces: TraceService, redis: Redis, workflow: WorkflowService
 ) -> None:
-    question = "Are these dates okay: This Saturday (07/11/2026)?"
-    runtime = ProposingRuntime(workflow, question)
+    written = "Got it, this Saturday (07/11/2026). Which area are you in?"
+    runtime = SavingDatesRuntime(workflow, written)
     response = await build(runtime, traces, redis).handle_message(ON_SATURDAY)
-    assert response.reply == question
+    assert response.reply == written
 
 
-async def test_full_exchange_when_the_model_asked_two_things_at_once(
+async def test_a_range_needs_both_ends_shown(
     traces: TraceService, redis: Redis, workflow: WorkflowService
 ) -> None:
-    """The stray yes: it could answer either question, so the dates get asked about directly."""
-    runtime = ProposingRuntime(workflow, "Thanks. What is your budget?")
+    runtime = SavingDatesRuntime(workflow, "Starting 02/11/2026. Which area?", "this week")
+    request = ChatRequest(user_id="u1", session_id="s1", message="A plumber this week")
+    response = await build(runtime, traces, redis).handle_message(request)
+    assert response.reply.startswith("Dates: This week (02/11/2026 to 08/11/2026).")
+
+
+async def test_the_dates_are_shown_once(
+    traces: TraceService, redis: Redis, workflow: WorkflowService
+) -> None:
+    runtime = SavingDatesRuntime(workflow, "Which area?")
     await build(runtime, traces, redis).handle_message(ON_SATURDAY)
 
-    yes = ChatRequest(user_id="u1", session_id="s1", message="yes")
-    second = await build(FakeRuntime("Noted."), traces, redis).handle_message(yes)
-    assert second.reply == "Are these dates okay: This Saturday (07/11/2026)?"
-    assert "start_date" not in (await workflow.snapshot("u1", "s1")).details
-
-    await build(FakeRuntime("Searching."), traces, redis).handle_message(yes)
-    assert (await workflow.snapshot("u1", "s1")).details["start_date"] == "2026-11-07"
+    next_message = ChatRequest(user_id="u1", session_id="s1", message="Indiranagar")
+    response = await build(FakeRuntime("Searching."), traces, redis).handle_message(next_message)
+    assert response.reply == "Searching."
 
 
-async def test_clear_yes_needs_no_second_question(
+async def test_dates_from_a_failed_turn_are_shown_by_the_next_reply(
     traces: TraceService, redis: Redis, workflow: WorkflowService
 ) -> None:
-    question = "Are these dates okay: This Saturday (07/11/2026)?"
-    await build(ProposingRuntime(workflow, question), traces, redis).handle_message(ON_SATURDAY)
-
-    yes = ChatRequest(user_id="u1", session_id="s1", message="yes")
-    await build(FakeRuntime("Searching."), traces, redis).handle_message(yes)
-    assert (await workflow.snapshot("u1", "s1")).details["start_date"] == "2026-11-07"
-
-
-async def test_hedged_answer_gets_the_direct_question(
-    traces: TraceService, redis: Redis, workflow: WorkflowService
-) -> None:
-    question = "Are these dates okay: This Saturday (07/11/2026)?"
-    await build(ProposingRuntime(workflow, question), traces, redis).handle_message(ON_SATURDAY)
-
-    hedge = ChatRequest(user_id="u1", session_id="s1", message="ok I guess")
-    response = await build(FakeRuntime("Great, searching!"), traces, redis).handle_message(hedge)
-    assert response.reply == question
-    assert "start_date" not in (await workflow.snapshot("u1", "s1")).details
-
-
-async def test_model_may_word_the_date_question_its_own_way(
-    traces: TraceService, redis: Redis, workflow: WorkflowService
-) -> None:
-    question = "Are these dates okay: This Saturday (07/11/2026)?"
-    await build(ProposingRuntime(workflow, question), traces, redis).handle_message(ON_SATURDAY)
-
-    hedge = ChatRequest(user_id="u1", session_id="s1", message="ok I guess")
-    reworded = "Could you confirm the date, This Saturday (07/11/2026)?"
-    response = await build(FakeRuntime(reworded), traces, redis).handle_message(hedge)
-    assert response.reply == reworded
-
-
-async def test_dates_shown_without_a_question_get_asked(
-    traces: TraceService, redis: Redis, workflow: WorkflowService
-) -> None:
-    runtime = ProposingRuntime(workflow, "I will use This Saturday (07/11/2026).")
-    response = await build(runtime, traces, redis).handle_message(ON_SATURDAY)
-    assert response.reply.endswith("Are these dates okay: This Saturday (07/11/2026)?")
-
-
-async def test_the_users_yes_confirms_before_the_model_runs(
-    traces: TraceService, redis: Redis, workflow: WorkflowService
-) -> None:
-    seen: list[list[str]] = []
-
-    class Checking(FakeRuntime):
-        async def run_turn(
-            self, user_id: str, session_id: str, message: str, recorder: RunRecorder
-        ) -> str:
-            snapshot = await workflow.snapshot(user_id, session_id)
-            seen.append(snapshot.missing_required)
-            return "ok"
-
-    await workflow.record_user_message("u1", "s1", "plumber in Indiranagar on Saturday")
-    await workflow.update_request("u1", "s1", {"service": "plumber", "area": "Indiranagar"})
+    await workflow.record_user_message("u1", "s1", "A plumber on Saturday")
     await workflow.resolve_dates("u1", "s1", "Saturday")
-    await workflow.note_date_question("u1", "s1", asked_alone=True)
 
-    await build(Checking(), traces, redis).handle_message(
-        ChatRequest(user_id="u1", session_id="s1", message="yes")
+    next_message = ChatRequest(user_id="u1", session_id="s1", message="Indiranagar")
+    response = await build(FakeRuntime("Searching."), traces, redis).handle_message(next_message)
+    assert response.reply.startswith("Dates: This Saturday (07/11/2026).")
+
+
+async def test_a_plain_yes_is_not_read_as_a_date_answer(
+    traces: TraceService, redis: Redis, workflow: WorkflowService
+) -> None:
+    yes = ChatRequest(user_id="u1", session_id="s1", message="yes")
+    response = await build(FakeRuntime("What would you like done?"), traces, redis).handle_message(
+        yes
     )
-    assert seen == [[]]
+    assert response.reply == "What would you like done?"
+    assert (await workflow.snapshot("u1", "s1")).details == {}

@@ -27,7 +27,13 @@ def relative(path: Path) -> str:
 
 
 def test_every_router_is_found() -> None:
-    assert {path.parent.name for path in ROUTERS} == {"chat", "system", "tracing"}
+    assert {path.parent.name for path in ROUTERS} == {
+        "bookings",
+        "chat",
+        "notifications",
+        "system",
+        "tracing",
+    }
 
 
 @pytest.mark.parametrize("router", ROUTERS, ids=relative)

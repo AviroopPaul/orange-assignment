@@ -157,6 +157,8 @@ class ScenarioConfig(_Strict):
     seed: int | None = None
     book_outcomes: list[BookOutcome] = Field(default_factory=list)
     quote_deltas: dict[str, int] | None = None
+    # A provider's list price changes, for example between an approval and the booking.
+    provider_prices: dict[str, int] | None = None
     slot_conflicts: list[str] | None = None
     timeout_hang_s: float | None = None
     reset_clock: bool = False

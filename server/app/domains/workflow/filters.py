@@ -21,10 +21,32 @@ def _in_window(slot: str, earliest: Any, latest: Any) -> bool:
     return (earliest is None or starts_at >= earliest) and (latest is None or starts_at < latest)
 
 
-def apply_hard_limits(providers: list[dict[str, Any]], request: dict[str, Any]) -> dict[str, Any]:
-    max_budget = field_value(request, "max_budget")
+def _slots_in_window(provider: dict[str, Any], request: dict[str, Any]) -> list[str]:
     earliest = parse_time(str(field_value(request, "earliest_time") or ""))
     latest = parse_time(str(field_value(request, "latest_time") or ""))
+    return [
+        slot for slot in provider.get("available_slots", []) if _in_window(slot, earliest, latest)
+    ]
+
+
+def build_shortlist(providers: list[dict[str, Any]], request: dict[str, Any]) -> dict[str, Any]:
+    """What may be proposed, including slots too many to show the model."""
+    max_budget = field_value(request, "max_budget")
+    shortlist = {}
+    for provider in providers:
+        slots = _slots_in_window(provider, request)
+        if slots and (max_budget is None or provider.get("price", 0) <= max_budget):
+            shortlist[str(provider.get("id"))] = {
+                "name": provider.get("name"),
+                "service": provider.get("service"),
+                "price": provider.get("price"),
+                "slots": slots,
+            }
+    return shortlist
+
+
+def apply_hard_limits(providers: list[dict[str, Any]], request: dict[str, Any]) -> dict[str, Any]:
+    max_budget = field_value(request, "max_budget")
 
     eligible = []
     over_budget = 0
@@ -33,11 +55,7 @@ def apply_hard_limits(providers: list[dict[str, Any]], request: dict[str, Any]) 
         if max_budget is not None and provider.get("price", 0) > max_budget:
             over_budget += 1
             continue
-        slots = [
-            slot
-            for slot in provider.get("available_slots", [])
-            if _in_window(slot, earliest, latest)
-        ]
+        slots = _slots_in_window(provider, request)
         if not slots:
             no_slot_in_window += 1
             continue

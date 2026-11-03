@@ -49,11 +49,19 @@ class JobService:
     ) -> None:
         self._db = db
         self._publisher = publisher
-        self._handlers = handlers
+        self._handlers = dict(handlers)
+        self._sweepers: list[Callable[[], Awaitable[object]]] = []
         self._clock = clock
         self._time_limit_s = time_limit_s
         self._lease = timedelta(seconds=lease_s)
         self._max_attempts = max_attempts
+
+    def register(self, job_name: str, handler: JobHandler) -> None:
+        self._handlers[job_name] = handler
+
+    def add_sweeper(self, sweeper: Callable[[], Awaitable[object]]) -> None:
+        """Another domain's recovery check. It runs on every sweep, before pending jobs are sent."""
+        self._sweepers.append(sweeper)
 
     async def enqueue_in(self, session: AsyncSession, job_name: str, payload: dict) -> uuid.UUID:
         """Add a job inside the caller's transaction, so it commits with the domain change."""
@@ -85,6 +93,12 @@ class JobService:
             repository = OutboxRepository(session)
             await repository.requeue_stalled(self._clock.now(), self._lease)
             await repository.fail_exhausted(self._max_attempts)
+        for sweeper in self._sweepers:
+            try:
+                await sweeper()
+            except Exception:
+                # One domain's trouble must not stop jobs from being sent.
+                logger.exception("sweeper failed")
         return await self.publish_pending()
 
     async def execute(self, job_id: uuid.UUID) -> ExecutionResult:

@@ -86,6 +86,16 @@ class MockRepository:
     async def get_hold(self, hold_id: str, lock: bool = False) -> Hold | None:
         return await self._session.get(Hold, hold_id, with_for_update=lock or None)
 
+    async def active_hold_for_slot(self, user_id: str, provider_id: str, slot: str) -> Hold | None:
+        return await self._session.scalar(
+            select(Hold).where(
+                Hold.user_id == user_id,
+                Hold.provider_id == provider_id,
+                Hold.slot == slot,
+                Hold.status == "active",
+            )
+        )
+
     async def get_attempt(self, idempotency_key: str) -> BookAttempt | None:
         return await self._session.get(BookAttempt, idempotency_key)
 

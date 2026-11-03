@@ -6,12 +6,49 @@ export type Outcome =
   | "limit_reached"
   | "tool_failed";
 
+export interface ApprovalCard {
+  approval_id: string;
+  action: string;
+  provider_name: string;
+  service: string;
+  slot: string;
+  slot_label: string;
+  price: number;
+  currency: string;
+  notes: string[];
+  expires_at: string;
+  status: string;
+}
+
+export interface ApprovalDecision {
+  status: string;
+  outcome: Outcome;
+  reply: string;
+  run_id: string;
+  session_id: string;
+  approval: ApprovalCard | null;
+}
+
+export interface BookingState {
+  approval: ApprovalCard | null;
+  attempt_open: boolean;
+}
+
+export interface NotificationItem {
+  id: number;
+  kind: string;
+  text: string;
+  data: { run_id?: string; approval?: ApprovalCard };
+  created_at: string;
+}
+
 export interface ChatResponse {
   run_id: string;
   session_id: string;
   outcome: Outcome;
   reason: string | null;
   reply: string;
+  approval?: ApprovalCard | null;
 }
 
 export type MessageRole = "user" | "agent" | "error";
@@ -23,4 +60,7 @@ export interface ChatMessage {
   runId?: string;
   outcome?: Outcome;
   reason?: string | null;
+  approval?: ApprovalCard;
+  // A card can be answered only while it is the latest question.
+  approvalOpen?: boolean;
 }

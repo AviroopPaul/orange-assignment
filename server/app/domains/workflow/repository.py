@@ -26,6 +26,14 @@ class WorkflowRepository:
         # Writers queue on the row for a moment, so concurrent updates do not collide.
         return await self._session.scalar(query.with_for_update() if lock else query)
 
+    async def get_by_id(self, workflow_id: uuid.UUID, lock: bool = False) -> Workflow | None:
+        query = (
+            select(Workflow)
+            .where(Workflow.id == workflow_id)
+            .execution_options(populate_existing=True)
+        )
+        return await self._session.scalar(query.with_for_update() if lock else query)
+
     async def add(self, workflow: Workflow) -> None:
         self._session.add(workflow)
         await self._session.flush()

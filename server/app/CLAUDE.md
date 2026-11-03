@@ -18,6 +18,8 @@ app/
     gateway/      the only path to any tool: rights, schema, budget, retries, sanitize, trace
     jobs/         outbox, publish, sweep, lease, taskiq broker and tasks
     workflow/     state machine, the errand's details, hard limits on search results
+    bookings/     approvals, the approval hash, reading a yes or no, and the booking saga
+    notifications/ what the system tells a user outside a chat turn
     tracing/      runs, trace events, cost
     system/       health, status, ping job
 ```
@@ -53,7 +55,13 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
   in `FAILURE_REPLIES`.
 - **Every tool call goes through `ToolGateway.call`.** Only `gateway/client.py` talks to the provider. `book`, `cancel` and `reschedule` need `Caller.SAGA` and a valid approval. The model never gets them as tools.
 - **The model never chooses search inputs.** It saves details with `update_request`, and code checks them against the user's words. `search_providers` takes no inputs.
-- **The model never works out a date.** `resolve_dates` reads the user's words, and `record_user_message` reads their yes or no before the model runs. Dates count only once confirmed.
+- **The model never works out a date.** `resolve_dates` reads the user's own words and saves the dates with no question. The next reply must show the exact dates: `ChatService` adds them if the model left them out. Bookings are approved on the card, not here.
+- **A yes comes only from the raw message or a click.** `decide_from_message` reads it before the model runs. The model can call `propose_booking`, which only takes a hold and shows a card.
+- **A card comes from the approval row only.** Never put model text or provider reviews on it.
+- **`book` needs a token built from what the saga sees now.** `token_for` hashes the approved facts with the current list price, and the verifier refuses any difference. A refused call was never sent.
+- **Only `get_booking_status` can report success.** It runs after every `book`, whatever `book` returned. Success text is a template, written in the same transaction that closes the attempt.
+- **Read again after taking a row lock.** A row read before the wait can be out of date, and SQLite tests will not show it. See `BUGS.md`.
+- **The saga commits before each call,** so a job that dies or repeats continues from what is known. Open attempts come back through `BookingSaga.recover`, which the sweep runs.
 - **Only code moves workflow state**, through `WorkflowService`. Add a move to `TRANSITIONS` before using it.
 - **A refusal is a result, not an exception.** Only a spent budget raises, because it must end the run.
 - **Reviews are data.** Safety comes from what the model can do, not from filtering text. Flags inform the trace; they do not block.

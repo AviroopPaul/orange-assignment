@@ -13,10 +13,16 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings
 from app.core.database import Base, Database
+from app.domains.bookings import models as booking_models  # noqa: F401
+from app.domains.bookings.service import ApprovalService
 from app.domains.gateway.client import ProviderClient
 from app.domains.gateway.service import DenyAllApprovals, ToolGateway
 from app.domains.jobs import models as job_models  # noqa: F401
+from app.domains.jobs.service import JobService
+from app.domains.notifications import models as notification_models  # noqa: F401
+from app.domains.notifications.service import NotificationService
 from app.domains.tracing import models as tracing_models  # noqa: F401
+from app.domains.tracing.service import TraceService
 from app.domains.workflow import models as workflow_models  # noqa: F401
 from app.domains.workflow.service import WorkflowService
 from mock_provider.config import MockSettings
@@ -125,6 +131,30 @@ async def gateway(provider_transport: httpx.AsyncBaseTransport) -> AsyncIterator
     await client.close()
 
 
+@pytest.fixture
+def jobs(db: Database, clock: FakeClock, publisher: RecordingPublisher) -> JobService:
+    return JobService(db, publisher, {}, clock, time_limit_s=45, lease_s=60, max_attempts=5)
+
+
+@pytest.fixture
+def notifications(db: Database, clock: FakeClock) -> NotificationService:
+    return NotificationService(db, clock)
+
+
+@pytest.fixture
+def bookings(
+    db: Database,
+    clock: FakeClock,
+    gateway: ToolGateway,
+    workflow: WorkflowService,
+    jobs: JobService,
+    notifications: NotificationService,
+) -> ApprovalService:
+    return ApprovalService(
+        db, clock, gateway, workflow, jobs, TraceService(db, clock), notifications
+    )
+
+
 async def make_ready(
     workflow: WorkflowService,
     user: str,
@@ -134,10 +164,8 @@ async def make_ready(
     area: str = "Indiranagar",
     **extra: object,
 ) -> None:
-    """A request with every detail saved and its dates confirmed, the way a real user gets there."""
+    """A request with every detail saved, the way a real user gets there."""
     said = " ".join(str(value) for value in extra.values())
     await workflow.record_user_message(user, session, f"{service} in {area} {phrase} {said}")
     await workflow.update_request(user, session, {"service": service, "area": area, **extra})
     await workflow.resolve_dates(user, session, phrase)
-    await workflow.note_date_question(user, session, asked_alone=True)
-    await workflow.record_user_message(user, session, "yes")

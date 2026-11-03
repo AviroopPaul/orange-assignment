@@ -352,6 +352,73 @@ code {
   color: var(--bad);
 }
 
+.approval {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  white-space: normal;
+}
+
+.approval.closed {
+  border-color: var(--line);
+  background: none;
+  color: var(--muted);
+}
+
+.approval h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.approval dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.approval dl > div {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 8px;
+}
+
+.approval dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.approval dd {
+  margin: 0;
+}
+
+.approval-price {
+  font-weight: 600;
+}
+
+.approval-note {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approval-closed {
+  margin: 0;
+  font-size: 13px;
+}
+
 .composer {
   display: flex;
   align-items: flex-end;

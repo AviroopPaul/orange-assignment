@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.tracing.models import Run, TraceEvent
@@ -23,6 +23,12 @@ class TraceRepository:
     async def add_event(self, event: TraceEvent) -> None:
         self._session.add(event)
         await self._session.flush()
+
+    async def last_seq(self, run_id: uuid.UUID) -> int:
+        found = await self._session.scalar(
+            select(func.max(TraceEvent.seq)).where(TraceEvent.run_id == run_id)
+        )
+        return found or 0
 
     async def finish_run(self, run_id: uuid.UUID, **values: object) -> None:
         await self._session.execute(update(Run).where(Run.id == run_id).values(**values))

@@ -1,7 +1,7 @@
 """What the model may call. Every function only passes through the gateway.
 
-`book`, `cancel` and `reschedule` are never exposed here: the model will propose those, and code
-will run them after approval. The model cannot choose search inputs either: it saves details with
+`book`, `cancel` and `reschedule` are never exposed here: the model proposes, and code runs them
+after the user's approval. The model cannot choose search inputs either: it saves details with
 `update_request`, and code builds the search from them.
 """
 
@@ -81,9 +81,9 @@ async def update_request(
 
 
 async def resolve_dates(phrase: str) -> dict:
-    """Turn the user's words about when into exact dates, for the user to confirm.
+    """Turn the user's words about when into exact dates, and save them.
 
-    Never work out a date yourself. Dates only count after the user confirms what this returns.
+    Never work out a date yourself. Show the user the exact dates this returns.
 
     Args:
         phrase: The user's own words, such as "tomorrow", "Saturday", "this week" or
@@ -121,6 +121,33 @@ async def search_providers() -> dict:
     )
 
 
+async def propose_booking(provider_id: str, slot: str) -> dict:
+    """Hold a slot and show the user a card with the exact provider, slot and price to confirm.
+
+    This does not book anything. Only the user's own click or reply can approve it, and you cannot
+    do that for them. Use it when the user has chosen, or asks you to book.
+
+    Args:
+        provider_id: The provider's ID from search_providers.
+        slot: The slot exactly as search_providers listed it.
+    """
+    turn = _turn()
+
+    async def propose(payload: dict[str, Any]) -> dict[str, Any]:
+        return await turn.bookings.propose_booking(
+            turn.session_id, payload["provider_id"], payload["slot"], turn.tool_context
+        )
+
+    return _for_model(
+        await turn.gateway.call_local(
+            "propose_booking",
+            {"provider_id": provider_id, "slot": slot},
+            turn.tool_context,
+            propose,
+        )
+    )
+
+
 async def get_provider(provider_id: str) -> dict:
     """Get one provider's details and customer reviews.
 
@@ -138,7 +165,9 @@ async def list_bookings() -> dict:
     if turn is None or turn.tool_context is None:
         raise RuntimeError("tool called outside a turn")
     # The user comes from the session, so the model cannot ask for someone else's bookings.
-    return _for_model(await _call("list_bookings", {"user_id": turn.tool_context.user_id}))
+    result = await _call("list_bookings", {"user_id": turn.tool_context.user_id})
+    turn.read_bookings = turn.read_bookings or result.ok
+    return _for_model(result)
 
 
 async def get_booking_status(
@@ -151,13 +180,17 @@ async def get_booking_status(
         idempotency_key: The booking attempt to check.
     """
     args = {"hold_id": hold_id, "idempotency_key": idempotency_key}
-    return _for_model(await _call("get_booking_status", args))
+    result = await _call("get_booking_status", args)
+    turn = _turn()
+    turn.read_bookings = turn.read_bookings or result.ok
+    return _for_model(result)
 
 
 MODEL_TOOLS: list[Callable[..., Any]] = [
     update_request,
     resolve_dates,
     search_providers,
+    propose_booking,
     get_provider,
     list_bookings,
     get_booking_status,

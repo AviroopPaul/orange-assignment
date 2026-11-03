@@ -19,6 +19,7 @@ from app.domains.agent import callbacks
 from app.domains.agent.llm import retry_delay_s
 from app.domains.agent.prompts import render_system_prompt
 from app.domains.agent.tools import MODEL_TOOLS
+from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import (
     ModelCallLimitExceeded,
     ModelRateLimited,
@@ -44,8 +45,10 @@ def build_agent(
         turn = callbacks.current_turn.get()
         if turn is None:
             return render_system_prompt(today())
-        snapshot = await turn.workflow.snapshot(turn.tool_context.user_id, turn.session_id)
-        return render_system_prompt(today(), snapshot.for_prompt())
+        user_id = turn.tool_context.user_id
+        snapshot = await turn.workflow.snapshot(user_id, turn.session_id)
+        booking = await turn.bookings.prompt_note(user_id, turn.session_id)
+        return render_system_prompt(today(), snapshot.for_prompt(), booking)
 
     return LlmAgent(
         name="errand_agent",
@@ -67,6 +70,7 @@ class AdkAgentRuntime:
         session_service: BaseSessionService,
         gateway: ToolGateway,
         workflow: WorkflowService,
+        bookings: ApprovalService,
         max_model_calls: int,
         max_tool_calls: int,
         today: Callable[[], date],
@@ -75,6 +79,7 @@ class AdkAgentRuntime:
         self._sessions = session_service
         self._gateway = gateway
         self._workflow = workflow
+        self._bookings = bookings
         self._model_name = model.model
         self._max_tool_calls = max_tool_calls
         self._run_config = RunConfig(max_llm_calls=max_model_calls)
@@ -102,6 +107,7 @@ class AdkAgentRuntime:
             MODEL_TOOL_NAMES,
             self._workflow,
             session_id,
+            self._bookings,
         )
         turn_token = callbacks.current_turn.set(turn)
         try:

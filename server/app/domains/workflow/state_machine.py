@@ -14,7 +14,7 @@ TRANSITIONS: dict[S, frozenset[S]] = {
     S.INTAKE: frozenset({S.SEARCHING, S.LIMIT_REACHED, S.FAILED}),
     S.SEARCHING: frozenset({S.COMPARING, S.INTAKE, S.LIMIT_REACHED, S.FAILED}),
     S.COMPARING: frozenset({S.SEARCHING, S.INTAKE, S.AWAITING_APPROVAL, S.LIMIT_REACHED, S.FAILED}),
-    S.AWAITING_APPROVAL: frozenset({S.EXECUTING, S.COMPARING, S.INTAKE, S.FAILED}),
+    S.AWAITING_APPROVAL: frozenset({S.EXECUTING, S.COMPARING, S.SEARCHING, S.INTAKE, S.FAILED}),
     # Executing can only move to verifying. After a timeout, nothing reaches a retry or DONE
     # without passing the status check first.
     S.EXECUTING: frozenset({S.VERIFYING, S.FAILED}),
