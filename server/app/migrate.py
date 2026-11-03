@@ -12,7 +12,10 @@ from alembic import command
 from alembic.config import Config
 from google.adk.sessions import DatabaseSessionService
 
+from app.core.clock import SystemClock
 from app.core.config import get_settings
+from app.core.database import Database
+from app.domains.memory.seed import seed_memories
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +33,15 @@ async def prepare_adk_tables() -> None:
     await service.db_engine.dispose()
 
 
+async def seed() -> None:
+    db = Database(get_settings().errand_database_url)
+    await seed_memories(db, SystemClock())
+    await db.dispose()
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     upgrade_errand_schema()
     asyncio.run(prepare_adk_tables())
+    asyncio.run(seed())
     logger.info("migrations finished")

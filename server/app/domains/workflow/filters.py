@@ -1,7 +1,8 @@
 """Hard limits, applied by code before the model sees any provider.
 
 The model must not be trusted to apply a budget or a time window. It compares what is left. The
-result is also kept small, because a raw search cost over 6,000 input tokens.
+result is also kept small, because a raw search cost over 6,000 input tokens. So it names the days a
+provider is open, and `get_open_slots` gives the times of one day when they are needed.
 """
 
 from datetime import datetime
@@ -9,7 +10,11 @@ from typing import Any
 
 from app.domains.workflow.request import field_value, parse_time
 
-MAX_SLOTS_SHOWN = 6
+
+def open_days(slots: list[str]) -> list[str]:
+    """Written by code, so the model need not work out a date or a weekday."""
+    days = {datetime.fromisoformat(slot).date() for slot in slots}
+    return [f"{day.isoformat()} {day:%a}" for day in sorted(days)]
 
 
 def _in_window(slot: str, earliest: Any, latest: Any) -> bool:
@@ -40,6 +45,7 @@ def build_shortlist(providers: list[dict[str, Any]], request: dict[str, Any]) ->
                 "name": provider.get("name"),
                 "service": provider.get("service"),
                 "price": provider.get("price"),
+                "rating": provider.get("rating"),
                 "slots": slots,
             }
     return shortlist
@@ -71,8 +77,7 @@ def apply_hard_limits(providers: list[dict[str, Any]], request: dict[str, Any]) 
                 "technician": attributes.get("technician"),
                 "years_experience": attributes.get("years_experience"),
                 "verified": attributes.get("verified"),
-                "slots": slots[:MAX_SLOTS_SHOWN],
-                "more_slots": max(0, len(slots) - MAX_SLOTS_SHOWN),
+                "open_days": open_days(slots),
             }
         )
 
@@ -80,5 +85,6 @@ def apply_hard_limits(providers: list[dict[str, Any]], request: dict[str, Any]) 
         "providers": eligible,
         "removed": {"over_budget": over_budget, "no_slot_in_time_window": no_slot_in_window},
         "note": "Only providers within the user's limits are listed. "
-        "The final price is quoted when a slot is held, and may differ.",
+        "The final price is quoted when a slot is held, and may differ. "
+        "Times are not listed: use get_open_slots for a provider and a day.",
     }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
+import { MemoryChatNote } from "../memory/MemoryChatNote";
+import type { MemoryItem } from "../memory/types";
 import { ApprovalCardView } from "./ApprovalCardView";
 import type { ApprovalCard, ChatMessage, Outcome } from "./types";
 
@@ -30,6 +32,7 @@ interface ChatPanelProps {
   selectedRunId: string | null;
   onSend: (text: string) => Promise<{ sent: boolean }>;
   onAnswer: (card: ApprovalCard, choice: "confirm" | "reject") => void;
+  onAnswerMemory: (item: MemoryItem, remember: boolean) => void;
   onNewChat: () => void;
   onSelectRun: (runId: string) => void;
 }
@@ -41,6 +44,7 @@ export function ChatPanel({
   selectedRunId,
   onSend,
   onAnswer,
+  onAnswerMemory,
   onNewChat,
   onSelectRun,
 }: ChatPanelProps) {
@@ -95,7 +99,8 @@ export function ChatPanel({
             <p className="empty-title">Tell the agent what you need done at home.</p>
             <p className="notice">
               The agent can search and compare providers, show your bookings, and book, cancel or
-              move a booking once you confirm it. Memory is not connected yet.
+              move a booking once you confirm it. It also remembers lasting preferences, which you
+              can check on the Memory panel.
             </p>
             <p className="examples-label">Try one of these</p>
             <div className="examples">
@@ -124,6 +129,12 @@ export function ChatPanel({
                 onAnswer={onAnswer}
               />
             )}
+            <MemoryChatNote
+              saved={message.memorySaved ?? []}
+              questions={message.memoryQuestions ?? []}
+              busy={sending}
+              onAnswer={onAnswerMemory}
+            />
             {message.role === "agent" && message.runId && (
               <button
                 type="button"

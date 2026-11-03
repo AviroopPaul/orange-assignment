@@ -90,7 +90,29 @@ Candidates for the "three real bugs" deliverable. Each one really happened, and 
 - **Why tests missed it:** They all passed a clean day and time, the way the code expected. The user answered over several messages, in loose words.
 - **Regression tests:** `test_a_weekday_next_week_is_in_next_calendar_week`, `test_a_bare_ordinal_is_the_next_one_to_come_round` and `test_a_time_the_user_never_gave_does_not` in `server/tests/unit/test_dates.py`, and `test_the_model_cannot_pick_a_time` in `server/tests/unit/test_booking_changes.py`.
 
+## 13. "Next week sometime", then "thur", could never become a date
+
+- **What broke:** The user said "next week sometime", then "lets do thur", then "cant you find out the date?". The agent kept asking for the exact date, and no search ran.
+- **Why:** Three faults, seen in the trace. The reader did not know "sometime", so the first answer was `date_not_understood`. The model then correctly sent "Thursday next week", but the check compared whole words, and the user had written "thur", so it was `date_not_stated`. Both refusals told the model to ask the user for a date, so it did. A later replay found a fourth: with the first answer fixed, the model sent just "thur", which read as this Thursday.
+- **Fix:** The check treats "thur" and "Thursday", "nov" and "November", "14th" and "14", and "tmrw" and "tomorrow" as the same word. The reader ignores "sometime", "anytime" and "whenever" beside a real date. A bare weekday inside the saved dates means that day of the saved range. The refusals now say never to ask for a calendar date. "Tuesday or Thursday next week" also used to start from this Tuesday; the week now applies to both days.
+- **Why tests missed it:** Grounding tests used full day names. This is the same kind of miss as bug 12: tests passed clean words, and users shorten them.
+- **Regression tests:** `test_the_days_a_user_shortens_count_as_their_own_words`, `test_sometime_next_week_is_the_whole_week` and `test_the_week_belongs_to_both_days_in_an_or` in `server/tests/unit/test_dates.py`, and `test_a_bare_day_after_next_week_means_that_weeks_day` in `server/tests/unit/test_workflow.py`.
+
+## 14. The agent named times a provider never had
+
+- **What broke:** The user picked Quick AC Care, which has no Tuesday slots. The agent offered Tuesday at 10:00, 11:00 and 12:00. Code refused three proposals, and each time the agent listed more invented Tuesday times. It also said "you work on Tuesdays", against the saved Mon, Wed, Fri. Nothing wrong could be booked, and no card appeared.
+- **Why:** Tool results were correct. The search showed only the first 6 of 34 slots, later turns the first 8, and no tool could read the rest, so a question about Tuesday had no answer. The made-up times match the other providers' Tuesday slots, listed beside Quick's (inferred from the logs). The refusal named no open slots. The prompt said "list a few open slots", with no rule against times it had not seen.
+- **Fix:** The user's idea: the model asks for what it needs. A new local tool, `get_open_slots(provider_id, day)`, returns one provider's times on one day. Search results now name the open days and no times. A refused slot returns the real times that day and the open days. The prompt forbids naming a time not returned in the same turn.
+- **Why tests missed it:** Scripted models only say what they are told, so nothing tested a model answering from a cut list. It took a person asking about a day past the cut.
+- **Regression tests:** `test_a_providers_times_on_one_day`, `test_each_provider_has_its_own_times`, `test_a_refused_slot_says_what_is_really_open` and `test_result_names_the_open_days_and_no_times` in `server/tests/unit/test_workflow.py`. The rule against naming times rests on the prompt, checked live only.
+
 ## Smaller
+
+**A stated fact was marked as a guess, and the other fact in the message was lost.** From testing the UI: "I live in Indiranagar and go to office on Mon, Wed and Fri 9-5", then "remember that". The model correctly wrote "goes to office", in the third person. The quote check wanted every word of the value in the user's sentence, so "goes" against "go" made it unconfirmed. The model also made only one call, so the area was never proposed. The check now ignores word endings and filler words, and the prompt asks for one call per fact. Regression tests: `test_a_words_ending_does_not_make_a_stated_fact_a_guess` and `test_two_facts_in_one_message_are_both_saved_and_shown_once` in `server/tests/unit/test_memory.py`. The one-call part rests on the prompt, checked live.
+
+**Saying no to a guess would have forgotten the real fact.** Forget on the panel worked by key. So forgetting an unconfirmed guess also forgot the trusted value under that key, and scrubbed it from the chat. I found this while adding the "Remember this?" card. It now drops only the guess. Regression test: `test_saying_no_to_a_guess_keeps_the_trusted_value`.
+
+**A typed yes or no never reached the model's history.** `decide_from_message` answers before the model runs, so neither the message nor the reply went into the ADK session. On a later turn the model could not see what the user had said. The new `turn_view` records every message and reply that ChatService handles. Regression test: `test_a_typed_answer_on_a_card_is_in_the_next_history` in `server/tests/unit/test_booking_chat.py`.
 
 **Retry tests needed a real API key.** `test_model_retry.py` passed `test-key` to `Settings`, but the Gemini client reads `GOOGLE_API_KEY` from the environment. The tests passed here only because this machine has a real key, and that key went to the local stub server. A dry run for CI found it. The tests now set a fake key in the environment. Separately, `Settings.google_api_key` only says whether a key is set: it is not what reaches the client, which matters only if the app runs outside Compose with the key only in `.env`.
 

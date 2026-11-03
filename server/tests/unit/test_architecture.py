@@ -30,6 +30,7 @@ def test_every_router_is_found() -> None:
     assert {path.parent.name for path in ROUTERS} == {
         "bookings",
         "chat",
+        "memory",
         "notifications",
         "system",
         "tracing",

@@ -14,6 +14,7 @@ from app.domains.agent.scripted import ScriptedLlm, ToolCall
 from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import ModelCallLimitExceeded, ModelUnavailable, SessionConflict
 from app.domains.gateway.service import ToolGateway
+from app.domains.memory.service import MemoryService
 from app.domains.tracing.service import RunRecorder, TraceService
 from app.domains.workflow.service import WorkflowService
 from tests.conftest import FakeClock
@@ -31,7 +32,11 @@ async def recorder(traces: TraceService) -> RunRecorder:
 
 @pytest.fixture
 def runtime_with(
-    bookings: ApprovalService, gateway: ToolGateway, workflow: WorkflowService, clock: FakeClock
+    bookings: ApprovalService,
+    gateway: ToolGateway,
+    workflow: WorkflowService,
+    clock: FakeClock,
+    memory: MemoryService,
 ):
     def build(
         script: list, sessions: InMemorySessionService | None = None, max_calls: int = 8
@@ -44,6 +49,7 @@ def runtime_with(
             gateway,
             workflow,
             bookings,
+            memory,
             max_model_calls=max_calls,
             max_tool_calls=12,
             today=lambda: clock.now().date(),
@@ -64,12 +70,16 @@ async def test_returns_the_model_reply_and_sends_the_system_prompt(
     assert SYSTEM_PROMPT.splitlines()[0] in str(model.requests[0].config.system_instruction)
 
 
-async def test_second_turn_sees_the_first_turn(recorder: RunRecorder, runtime_with) -> None:
-    runtime, model, _ = runtime_with(["First reply.", "Second reply."])
-    await runtime.run_turn("u1", "s1", "My area is Indiranagar", recorder)
+async def test_second_turn_sees_the_first_turn(
+    recorder: RunRecorder, runtime_with, memory: MemoryService
+) -> None:
+    runtime, model, _ = runtime_with(["Second reply."])
+    await memory.record_turn("u1", "s1", "user", "My area is Indiranagar")
+    await memory.record_turn("u1", "s1", "assistant", "First reply.")
+    await memory.record_turn("u1", "s1", "user", "And the budget is 1500")
     await runtime.run_turn("u1", "s1", "And the budget is 1500", recorder)
 
-    seen = str(model.requests[1].contents)
+    seen = str(model.requests[0].contents)
     assert "My area is Indiranagar" in seen
     assert "First reply." in seen
     assert "And the budget is 1500" in seen
@@ -131,8 +141,8 @@ async def test_model_error_is_translated_and_traced(
         await runtime.run_turn("u1", "s1", "hi", recorder)
 
     trace = await traces.get_trace(recorder.run_id)
-    assert [event.kind for event in trace.events] == ["model_error"]
-    assert trace.events[0].data["error"] == "ServerError"
+    assert [event.kind for event in trace.events] == ["context_assembled", "model_error"]
+    assert trace.events[1].data["error"] == "ServerError"
 
 
 async def test_stale_session_write_is_translated(recorder: RunRecorder, runtime_with) -> None:

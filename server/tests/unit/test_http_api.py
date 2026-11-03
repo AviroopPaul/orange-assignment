@@ -72,7 +72,11 @@ async def test_chat_then_read_its_trace(client: httpx.AsyncClient) -> None:
     assert trace["session_id"] == body["session_id"]
     assert trace["model_calls"] == 1
     assert trace["input_tokens"] == 10
-    assert [event["kind"] for event in trace["events"]] == ["model_call", "outcome"]
+    assert [event["kind"] for event in trace["events"]] == [
+        "context_assembled",
+        "model_call",
+        "outcome",
+    ]
 
 
 @pytest.mark.parametrize(

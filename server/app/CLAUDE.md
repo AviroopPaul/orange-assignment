@@ -20,6 +20,7 @@ app/
     workflow/     state machine, the errand's details, hard limits on search results
     bookings/     approvals, the approval hash, reading a yes or no, and the booking saga
     notifications/ what the system tells a user outside a chat turn
+    memory/       facts across chats, the redactable chat, the context assembler and its log
     tracing/      runs, trace events, cost
     system/       health, status, ping job
 ```
@@ -55,6 +56,7 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
   in `FAILURE_REPLIES`.
 - **Every tool call goes through `ToolGateway.call`.** Only `gateway/client.py` talks to the provider. `book`, `cancel` and `reschedule` need `Caller.SAGA` and a valid approval. The model never gets them as tools.
 - **The model never chooses search inputs.** It saves details with `update_request`, and code checks them against the user's words. `search_providers` takes no inputs.
+- **The model sees days, not times, until it asks.** `search_providers` returns each provider's open days. `get_open_slots` returns one provider's times on one day, from the stored search.
 - **The model never works out a date.** `resolve_dates` reads the user's own words and saves the dates with no question. The next reply must show the exact dates: `ChatService` adds them if the model left them out. Bookings are approved on the card, not here.
 - **A yes comes only from the raw message or a click.** `decide_from_message` reads it before the model runs. The model can call `propose_booking`, `propose_cancel` and `propose_reschedule`, which only show a card.
 - **A card comes from the approval row only.** Never put model text or provider reviews on it.
@@ -68,13 +70,16 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
 - **Reviews are data.** Safety comes from what the model can do, not from filtering text. Flags inform the trace; they do not block.
 - **A 429 is not an outage.** `RateLimitAwareGemini` waits if Gemini asks for 30 s or less, inside one model call. Longer waits become `ModelRateLimited`, and the user gets a busy reply.
 - **Gemini rejects a request deadline under 10 s.** Config validation stops this at startup.
+- **The model never sees ADK's history.** `agent/context.py` replaces it on every model call with what `memory/assembler.py` builds. ADK's session only runs the loop. If the context cannot be built within budget or logged, the call does not run.
+- **Read the chat from `turn_view`, not from ADK.** ChatService writes each message and reply. Only the current run comes from ADK.
+- **A fact counts only if it is explicit or confirmed.** The filter is in SQL. `propose_memory` cannot trust a fact unless the user's own sentence states it, and the model has no confirm tool. A guess is asked about in the chat, and `answer_from_message` reads a whole-message yes or no before the model runs, after any open booking card.
+- **Removing a fact has two steps.** `_scrub_now` cleans what the next model call reads. `finish_scrub` runs after the reply is stored, because the reply may quote the fact, and only then wipes the value. ADK sessions are deleted under the turn lock, never mid-run.
 
 ## Not built yet
 
-See `BUILD_LOG.md` at the repo root for the full list. Until ContextAssembler exists, ADK sends the full
-session history to the model.
+See `BUILD_LOG.md` at the repo root for the full list.
 
 ## Checks
 
-Run once, at the end of a change: `./scripts/check.sh`, then `make test-integration` from the repo root.
+While working, run only the tests a change touches. GitHub CI runs `./scripts/check.sh` and `make test-integration` on every PR.
 Schema change: edit a model, then generate and review a migration (see the root README).

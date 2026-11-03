@@ -29,10 +29,12 @@ from app.domains.chat.ports import (
 )
 from app.domains.gateway.schemas import Caller
 from app.domains.gateway.service import CallContext, ToolBudget, ToolBudgetExhausted, ToolGateway
+from app.domains.memory.service import MemoryService
 from app.domains.tracing.service import RunRecorder
 from app.domains.workflow.service import WorkflowSearchGuard, WorkflowService
 
 APP_NAME = "errand-agent"
+DEFAULT_CONTEXT_BUDGET = 8000
 MODEL_TOOL_NAMES = frozenset(tool.__name__ for tool in MODEL_TOOLS)
 
 
@@ -41,14 +43,9 @@ def build_agent(
     request_config: types.GenerateContentConfig | None,
     today: Callable[[], date],
 ) -> LlmAgent:
-    async def instruction(context: ReadonlyContext) -> str:
-        turn = callbacks.current_turn.get()
-        if turn is None:
-            return render_system_prompt(today())
-        user_id = turn.tool_context.user_id
-        snapshot = await turn.workflow.snapshot(user_id, turn.session_id)
-        booking = await turn.bookings.prompt_note(user_id, turn.session_id)
-        return render_system_prompt(today(), snapshot.for_prompt(), booking)
+    # `before_model` replaces this with the assembled context on every call.
+    def instruction(context: ReadonlyContext) -> str:
+        return render_system_prompt(today())
 
     return LlmAgent(
         name="errand_agent",
@@ -71,15 +68,20 @@ class AdkAgentRuntime:
         gateway: ToolGateway,
         workflow: WorkflowService,
         bookings: ApprovalService,
+        memory: MemoryService,
         max_model_calls: int,
         max_tool_calls: int,
         today: Callable[[], date],
+        context_budget: int = DEFAULT_CONTEXT_BUDGET,
         request_config: types.GenerateContentConfig | None = None,
     ) -> None:
         self._sessions = session_service
         self._gateway = gateway
         self._workflow = workflow
         self._bookings = bookings
+        self._memory = memory
+        self._today = today
+        self._context_budget = context_budget
         self._model_name = model.model
         self._max_tool_calls = max_tool_calls
         self._run_config = RunConfig(max_llm_calls=max_model_calls)
@@ -108,6 +110,9 @@ class AdkAgentRuntime:
             self._workflow,
             session_id,
             self._bookings,
+            self._memory,
+            self._today,
+            self._context_budget,
         )
         turn_token = callbacks.current_turn.set(turn)
         try:
@@ -127,6 +132,19 @@ class AdkAgentRuntime:
             raise ModelUnavailable(f"{type(error).__name__}: {error}") from error
         finally:
             callbacks.current_turn.reset(turn_token)
+
+    async def rotate_session(self, user_id: str, session_id: str) -> None:
+        """ADK's log is append-only, so a removed fact leaves only with the whole session.
+
+        Nothing is lost: the model reads the chat from `turn_view`. Call this under the turn lock.
+        """
+        existing = await self._sessions.get_session(
+            app_name=APP_NAME, user_id=user_id, session_id=session_id
+        )
+        if existing is not None:
+            await self._sessions.delete_session(
+                app_name=APP_NAME, user_id=user_id, session_id=session_id
+            )
 
     async def _ensure_session(self, user_id: str, session_id: str) -> None:
         existing = await self._sessions.get_session(

@@ -18,6 +18,7 @@ from app.domains.chat.ports import ToolCallLimitExceeded
 from app.domains.chat.schemas import ChatRequest, FailureReason, Outcome
 from app.domains.chat.service import ChatService
 from app.domains.gateway.service import ToolGateway
+from app.domains.memory.service import MemoryService
 from app.domains.tracing.schemas import RunTraceRead
 from app.domains.tracing.service import RunRecorder, TraceService
 from app.domains.workflow.service import WorkflowService
@@ -36,7 +37,11 @@ def traces(db: Database, clock: FakeClock) -> TraceService:
 
 @pytest.fixture
 def build(
-    bookings: ApprovalService, gateway: ToolGateway, workflow: WorkflowService, clock: FakeClock
+    bookings: ApprovalService,
+    gateway: ToolGateway,
+    workflow: WorkflowService,
+    clock: FakeClock,
+    memory: MemoryService,
 ) -> Callable[..., tuple[AdkAgentRuntime, ScriptedLlm]]:
     def _build(script: list, max_tools: int = 12, max_calls: int = 20) -> tuple:
         model = ScriptedLlm(model="gemini-3.5-flash-lite", script=script)
@@ -46,6 +51,7 @@ def build(
             gateway,
             workflow,
             bookings,
+            memory,
             max_model_calls=max_calls,
             max_tool_calls=max_tools,
             today=lambda: clock.now().date(),
@@ -83,7 +89,11 @@ async def test_model_is_offered_no_side_effect_tool(build: Callable, traces: Tra
         "propose_booking",
         "propose_cancel",
         "propose_reschedule",
+        "propose_memory",
+        "list_memories",
+        "forget_memory",
         "search_providers",
+        "get_open_slots",
         "get_provider",
         "list_bookings",
         "get_booking_status",
@@ -126,7 +136,9 @@ async def test_search_runs_through_the_gateway_and_the_model_sees_the_result(
         "area": "Indiranagar",
         "date_range": {"start": "2026-11-03", "end": "2026-11-05"},
     }
-    assert [event.kind for event in trace.events] == [
+    # Each model call starts from a freshly assembled context.
+    kinds = [event.kind for event in trace.events if event.kind != "context_assembled"]
+    assert kinds == [
         "model_call",
         "state_transition",
         "tool_call",
@@ -142,8 +154,10 @@ async def test_wide_search_is_cut_down_and_says_so(
     runtime, model = build([SEARCH, "ok"])
     await run(runtime, traces)
     seen = seen_by_model(model, 1)
-    assert "more_slots" in seen
+    assert "open_days" in seen
     assert "available_slots" not in seen
+    # No times at all, however wide the search.
+    assert "T09:00" not in seen
 
 
 async def test_list_bookings_uses_the_sessions_user(
@@ -247,9 +261,12 @@ async def test_tool_limit_gives_the_user_a_clear_reply(
     traces: TraceService,
     redis: Redis,
     workflow: WorkflowService,
+    memory: MemoryService,
 ) -> None:
     runtime, _ = build([ToolCall("list_bookings")], max_tools=2)
-    chat = ChatService(runtime, RedisTurnLock(redis, 10, 1), traces, workflow, bookings, 30, True)
+    chat = ChatService(
+        runtime, RedisTurnLock(redis, 10, 1), traces, workflow, bookings, 30, True, memory
+    )
     response = await chat.handle_message(ChatRequest(user_id=USER, session_id="s", message="go"))
 
     assert response.outcome == Outcome.LIMIT_REACHED
@@ -270,7 +287,11 @@ async def test_each_turn_gets_a_fresh_tool_budget(build: Callable, traces: Trace
 
 
 async def test_provider_failure_is_told_to_the_model_not_raised(
-    bookings: ApprovalService, clock: FakeClock, traces: TraceService, workflow: WorkflowService
+    bookings: ApprovalService,
+    clock: FakeClock,
+    traces: TraceService,
+    workflow: WorkflowService,
+    memory: MemoryService,
 ) -> None:
     import httpx
 
@@ -293,6 +314,7 @@ async def test_provider_failure_is_told_to_the_model_not_raised(
         gateway,
         workflow,
         bookings,
+        memory,
         max_model_calls=8,
         max_tool_calls=12,
         today=lambda: clock.now().date(),
@@ -334,6 +356,7 @@ async def test_model_receives_todays_date_on_each_call(
     clock: FakeClock,
     traces: TraceService,
     workflow: WorkflowService,
+    memory: MemoryService,
 ) -> None:
     model = ScriptedLlm(model="m", script=["ok"])
     runtime = AdkAgentRuntime(
@@ -342,6 +365,7 @@ async def test_model_receives_todays_date_on_each_call(
         gateway,
         workflow,
         bookings,
+        memory,
         max_model_calls=8,
         max_tool_calls=12,
         today=lambda: clock.now().date(),
@@ -473,6 +497,7 @@ async def test_failed_search_returns_to_intake(
     traces: TraceService,
     workflow: WorkflowService,
     gateway: ToolGateway,
+    memory: MemoryService,
 ) -> None:
     await make_ready(workflow, USER, "s1", service="astrologer")
     model = ScriptedLlm(model="m", script=[SEARCH, "We do not offer that."])
@@ -482,6 +507,7 @@ async def test_failed_search_returns_to_intake(
         gateway,
         workflow,
         bookings,
+        memory,
         max_model_calls=8,
         max_tool_calls=12,
         today=lambda: clock.now().date(),

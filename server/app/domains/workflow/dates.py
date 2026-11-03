@@ -55,6 +55,13 @@ _LEADING = re.compile(r"^(?:between|from|on|for|by|at|the)\s+")
 # Small words that say nothing about when. Everything else must come from the user.
 _FILLER = frozenset({"on", "the", "for", "of", "between", "and", "to", "or", "at", "from", "by"})
 
+# "Sometime" adds nothing to "next week". Alone, it names no day, so the agent must ask.
+_ANY_TIME = re.compile(r"\b(?:sometime|some time|anytime|any time|any day|whenever)\b")
+# How people shorten "tomorrow". Short day and month names are handled through their numbers.
+_TOMORROW = re.compile(r"\b(?:tmrw|tmr|tmw|tomo|tom)\b")
+_WEEK_AT_END = re.compile(r"\s(this|next) week$")
+_ISO_START = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
 _NUMERIC = re.compile(r"^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?$")
 _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _DAY_MONTH = re.compile(rf"^(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH})(?:\s+(\d{{4}}))?$")
@@ -142,6 +149,9 @@ def _full_name(weekday: int) -> str:
 
 
 def _one_phrase(text: str, today: date) -> ResolvedDates | None:
+    without_filler = re.sub(r"\s+", " ", _ANY_TIME.sub(" ", text)).strip()
+    if text not in ("any day", "any day this week", "any day next week") and without_filler:
+        text = without_filler
     text = _LEADING.sub("", text).strip()
     this_sunday = today + timedelta(days=6 - today.weekday())
     next_monday = _start_of_next_week(today)
@@ -195,9 +205,14 @@ def _one_phrase(text: str, today: date) -> ResolvedDates | None:
 def resolve_phrase(phrase: str, today: date) -> ResolvedDates | None:
     """None means the words were not understood, so the agent must ask for a clearer date."""
     text = re.sub(r"\s+", " ", phrase.strip().casefold().replace(",", " ")).strip()
+    text = _TOMORROW.sub("tomorrow", text)
     parts = _CONNECTOR.split(_LEADING.sub("", text))
     if len(parts) == 1:
         return _one_phrase(parts[0], today)
+
+    # "Tuesday or Thursday next week": the week belongs to both days.
+    if match := _WEEK_AT_END.search(parts[-1]):
+        parts = [f"{part} {match[1]} week" if part in _WEEKDAYS else part for part in parts]
 
     resolved = [_one_phrase(part, today) for part in parts]
     if any(item is None for item in resolved):
@@ -205,6 +220,35 @@ def resolve_phrase(phrase: str, today: date) -> ResolvedDates | None:
     start = min(item.start for item in resolved if item)
     end = max(item.end for item in resolved if item)
     return _span(f"{start:%A} to {end:%A}", start, end)
+
+
+def narrowed_to_saved(phrase: str, saved_start: date, saved_end: date) -> ResolvedDates | None:
+    """Just "Thursday" after "next week" means that week's Thursday, not the nearest one.
+
+    Words such as "this Thursday" name a day on their own, so this does not apply to them.
+    """
+    word = _LEADING.sub("", phrase.strip().casefold())
+    if word not in _WEEKDAYS or saved_start == saved_end:
+        return None
+    day = saved_start + timedelta(days=(_WEEKDAYS[word] - saved_start.weekday()) % 7)
+    return _single(_full_name(_WEEKDAYS[word]), day) if day <= saved_end else None
+
+
+def one_day(words: str, saved_start: date, saved_end: date, today: date) -> date | None:
+    """The day being asked about: an exact date, or words such as "tue" or "Thursday next week".
+
+    This only reads what is open and saves nothing, so the words need not be the user's own.
+    """
+    if match := _ISO_START.match(words.strip()):
+        try:
+            return date.fromisoformat(match[1])
+        except ValueError:
+            return None
+    narrowed = narrowed_to_saved(words, saved_start, saved_end)
+    if narrowed is not None:
+        return narrowed.start
+    resolved = resolve_phrase(words, today)
+    return resolved.start if resolved and resolved.start == resolved.end else None
 
 
 def problem_with(resolved: ResolvedDates, today: date) -> str | None:
@@ -238,9 +282,24 @@ def time_is_stated(at: str, user_text: str) -> bool:
     )
 
 
+def _same_word(word: str) -> str:
+    """ "Thur" and "Thursday" count as one word, because the user may shorten what the model spells.
+
+    So do "14th" and "14".
+    """
+    word = _TOMORROW.sub("tomorrow", word)
+    if ordinal := _ORDINAL.match(word):
+        return ordinal[1]
+    if word in _WEEKDAYS:
+        return f"day-{_WEEKDAYS[word]}"
+    if word in _MONTHS:
+        return f"month-{_MONTHS[word]}"
+    return word
+
+
 def is_grounded(phrase: str, user_text: str) -> bool:
     """Every meaningful word must be the user's own. No date mentioned means nothing passes."""
-    said = {word.casefold() for word in re.findall(r"\w+", user_text)}
+    said = {_same_word(word.casefold()) for word in re.findall(r"\w+", user_text)}
     words = [word.casefold() for word in re.findall(r"\w+", phrase)]
-    meaningful = [word for word in words if word not in _FILLER]
+    meaningful = [_same_word(word) for word in words if word not in _FILLER]
     return bool(meaningful) and all(word in said for word in meaningful)

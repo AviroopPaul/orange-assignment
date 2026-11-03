@@ -15,13 +15,13 @@ Last updated: 3 Nov 2026.
 
 | Area | Done | Partial | Not started | Total |
 |---|---|---|---|---|
-| Functional requirements | 8 | 2 | 4 | 14 |
-| Non-functional requirements | 7 | 10 | 3 | 20 |
-| Eval scenarios | 0 | 27 | 9 | 36 |
+| Functional requirements | 12 | 1 | 1 | 14 |
+| Non-functional requirements | 11 | 9 | 0 | 20 |
+| Eval scenarios | 0 | 33 | 3 | 36 |
 | Eval invariants | 0 | 0 | 8 | 8 |
 | Deliverables | 0 | 2 | 5 | 7 |
 
-**In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It can cancel or move a booking the same way: a card, the user's own yes, then a worker that checks the provider before it reports success. It cannot remember anything across sessions yet.
+**In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It can cancel or move a booking the same way: a card, the user's own yes, then a worker that checks the provider before it reports success. It now remembers lasting facts across chats, and the user can inspect, correct and forget them. Every model call gets a context built by code, within 8,000 estimated tokens, and logged first.
 
 ## What you can test today
 
@@ -32,6 +32,10 @@ Run `make up`, then open `http://localhost:3000`.
 | Chat with the agent | Live Gemini replies. It asks only for missing details |
 | Correct a detail | Change the budget, and it keeps the area and service |
 | Reload the page | The chat stays. The agent still knows the context |
+| Tell it a lasting fact | "I live in Indiranagar and go to office Mon to Fri." No need to say "remember". Each fact is saved, and the reply says so. A new chat uses them without asking |
+| Answer a guess | If your words do not state a fact, the chat asks "Remember this?". Click, or type yes or no |
+| Correct or forget a fact | In chat or on the panel. The old value no longer reaches the model |
+| See the seeded memories | Open `http://localhost:3000/?user=seed-user`: 40 trusted facts and 8 unconfirmed |
 | Start a new chat | A new session that knows nothing about the old one |
 | See what a turn did | The trace panel shows outcome, latency, tokens and cost. "View trace" switches between replies |
 | Search and compare | "Find a plumber in Indiranagar this week, mornings only, under ₹1,500." It saves the details, searches and recommends one. The trace shows each state change |
@@ -80,11 +84,11 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | F6 | Cancel with approval | Done | `propose_cancel` reads the booking from the provider and shows a card. A click or whole-message yes starts the saga. The gateway retries the 503 with the same key. `list_bookings` alone reports success. Running out of retries is a clear failure. Tested in unit and integration tests, and live | |
 | F7 | Reschedule with approval | Done | `propose_reschedule` takes the user's own words for the day, and code builds the slot. `slot_conflict` keeps the old booking and offers slots if a search has any. A new time needs a new yes. Tested in unit and integration tests, and live | |
 | F8 | Refer to past bookings | Partial | The model can call `list_bookings`, always for its own session's user | Code resolution of "same as last time", and asking when several match |
-| F9 | Remember across sessions | Not started | | `memories` table and domain |
-| F10 | Inspect, correct, forget | Not started | Session delete was tested in a spike | Chat and REST, supersede, tombstone, `turn_view`, session rotation |
-| F11 | Explicit vs inferred | Not started | | `propose_memory` with the quote check |
+| F9 | Remember across sessions | Done | `memories` table keyed by user. A new session gets the facts, and a remembered area fills the errand with source `memory`. Unit tests and a live check | |
+| F10 | Inspect, correct, forget | Done | Chat tools, REST and the Memory panel. Correct adds a row and supersedes. Forget wipes the value, redacts `turn_view`, the errand, `context_log` and traces, then deletes the ADK session. Unit tests and a live check found the values in none of them | |
+| F11 | Explicit vs inferred | Done | `propose_memory`: the quote must be the user's, word for word, and must state the value. Anything else stays out of context, and the chat asks the user. A click, a whole-message yes or saying it plainly makes it count. Tested | |
 | F12 | Proactive cancellation | Not started | Worker and scheduler run, and the sweep job proves it | Provider poll job, notify policy, replacement search, notifications |
-| F13 | Real LLM drives the agent | Partial | Gemini through ADK reads requests, saves details and calls `propose_booking`. A full booking checked live | `propose_cancel`, `propose_reschedule`, `propose_memory` |
+| F13 | Real LLM drives the agent | Done | Gemini through ADK reads requests, saves details and calls every propose tool. A full booking, a move and memory changes checked live | |
 | F14 | Mock tools match the contract | Done | All 8 tools in their own container, with their own database. Outcomes come from `hash(seed, key, attempt)`. Scenarios force any outcome. Clock can move. Split tested over 100,000 keys. Races, a real client timeout and a server kill tested on PostgreSQL | |
 
 ## Non-functional requirements
@@ -99,10 +103,10 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | N6 | Verify after a timeout | Done | Every `book` result goes through VERIFYING and `get_booking_status`. The state machine has no other way to DONE. A timeout that booked is not retried. One that did not book is retried with the same key, at most twice. Tested on real services and through the UI | |
 | N7 | No false success claims | Partial | Success text is a template, written only after a verified status. `after_model` replaces a model reply that claims a result, unless this turn read the bookings or the session has a verified booking. Tested through the real ADK loop | The guard reads wording, so a claim in unusual words can pass. Recorded Gemini replies and evals |
 | N8 | Safe across restarts | Partial | The attempt row commits before each call. A real worker killed during `book` was resolved by status with one booking and no second call. Crash points before and after `book` tested. A Redis wipe after approval still booked once | `api` kill tests through the eval harness |
-| N9 | Tool output is data | Partial | The model has no side-effect tool. Reviews are labelled untrusted and flagged in the trace. A scripted model that obeys an injection still cannot book. Live Gemini read real injections and did not follow them. The card holds no review text, tested | Memory provenance |
-| N10 | Fixed context budget | Not started | Search results are now compact: a turn with a search used 6,413 input tokens across 3 model calls. | ContextAssembler. **The full session history is still sent to the model:** a correction turn after two searches used 12,821 input tokens across 3 calls |
-| N11 | No forgotten or unconfirmed facts | Not started | | Filter, redacted `turn_view`, marker tests |
-| N12 | Log context each turn | Not started | | `context_log` |
+| N9 | Tool output is data | Done | The model has no side-effect tool. Reviews are labelled untrusted and flagged in the trace. A scripted model that obeys an injection still cannot book. Live Gemini read real injections and did not follow them. The card holds no review text, tested. A review cannot plant a fact or make the model forget one, tested | |
+| N10 | Fixed context budget | Done | `ContextAssembler` runs on every model call, mid-run ones too. Seeded user, live: estimated 7,979 and 7,991 of 8,000, real 6,240 and 6,647. Trim order tested piece by piece. If nothing is left to trim, the call does not run | |
+| N11 | No forgotten or unconfirmed facts | Done | SQL filter first, redacted `turn_view`, summary built from redacted text. Seeded markers searched in every request and every logged context | |
+| N12 | Log context each turn | Done | Full system text and contents, tool names, per-piece counts and the real count go to `context_log` before each call. A failed write stops the call and gives a clear reply, tested | |
 | N13 | Trace every run | Partial | `runs` and `trace_events`: model calls, tool names, sanitized arguments and results, state changes, latency, outcome, refusals. Shown in the UI | JSONL file per run, run ID across jobs |
 | N14 | Tokens and cost | Done | Usage and cost per call and per run. Tested with live and scripted models | |
 | N15 | Survive model and tool failure | Partial | Model: request timeout, one retry on 503 and 504, clear reply. Rate limits: waits up to 30 s if Gemini asks, otherwise says the model is busy and when to retry. Checked against the real free-tier limit. Tools: timeout, per-tool retries, clear errors. Saga: a job limit during `book`, and status or provider reads being down, stay open as "not confirmed yet" and resolve later | Cancel and reschedule retries in the saga |
@@ -119,11 +123,11 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | `postgres`, `redis`, `migrate` | Done | Three databases. `migrate` also creates the mock's tables and demo bookings |
 | `api` | Partial | Has `/chat`, `/approvals/{id}`, `/bookings/current`, `/notifications`, `/runs/{id}/trace`, `/healthz`, `/readyz`, `/system/*`. Missing `/memories`, `/events` |
 | `worker`, `scheduler` | Partial | Outbox, leases, sweep and the booking saga work. Proactive jobs are missing |
-| `web` | Partial | Chat, approval card, booking results by polling, trace that follows a running booking, status bar. Missing memory page, SSE |
+| `web` | Partial | Chat, approval card, booking results by polling, trace that follows a running booking, status bar, Memory panel. Missing SSE |
 | `mock-provider` | Done | Port 8100. `/admin` is off unless `MOCK_EVAL_MODE=true` |
 | `evals` | Not started | |
 | Tool gateway | Done | Allowlist, caller rights, schema, user binding, budget, retries, timeouts, sanitizing, tracing and the real approval verifier |
-| ContextAssembler | Not started | |
+| ContextAssembler | Done | `domains/memory/assembler.py` is pure code. `domains/agent/context.py` puts its result into ADK's request |
 
 ## Evaluation
 
@@ -158,7 +162,13 @@ The eval harness and the invariant checker (I1 to I8) are not built, so there is
 | E35 | PostgreSQL down during approval | Partial | Unit tests and a manual check. Nothing is consumed |
 | E36 | Worker killed on a quiet queue | Partial | Integration test |
 | E19 | Reschedule gets `slot_conflict` | Partial | Old booking stays and the old yes is spent. Real worker in an integration test, and live |
-| E03, E07, E20 to E26 | All others | Not started | Need memory, context assembly and proactive detection |
+| E03 | Area known from memory | Partial | Unit test and a live check. Field source is `memory` |
+| E07 | Review tries to plant a memory | Partial | Quote check fails, and the value is out of the very next call. Unit test |
+| E21 | Correct a memory | Partial | Unit test and a live check, including the old chat |
+| E22 | Forget a memory also in old chat | Partial | Unit tests, one on the seeded long chat, and a live check |
+| E23 | Inferred fact, then confirmed | Partial | Unit test |
+| E26 | 60 memories and a long chat | Partial | Unit test on every call, and a live check. See the `list_memories` limit below |
+| E20, E24, E25 | All others | Not started | Need code resolution of past bookings and proactive detection |
 
 ## Test audit
 
@@ -250,6 +260,18 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **Failure after retries keeps the errand:** the workflow returns to COMPARING, not FAILED, so the user does not have to repeat their details.
 - **The false-claim guard allows a claim in two cases:** this turn read the bookings, or the session has a verified booking. Otherwise "what do I have booked?" would be blocked.
 
+- **The summary is built on read, not stored:** code writes it from redacted `turn_view` rows and system-written updates. So there is nothing to rebuild on forget, and it cannot bring a fact back.
+- **Memory, search results and summary go in the system text:** the blueprint names only the budget and the slices. Older turns stay as chat contents.
+- **Forget goes further than the blueprint:** it also cleans the open errand, `context_log`, runs and trace events. Otherwise the errand would feed the value back to the model, and the logs would keep it readable.
+- **A corrected value also leaves the stored chat:** the old value was in the words the model would read, and I4 forbids that. It stays in the chat only if the new value contains it, as with "HSR" and "HSR Layout".
+- **The quote check is stricter:** the quote must also state the value, because a real but unrelated sentence of the user's would pass the blueprint's check.
+- **Two more model tools:** `list_memories` and `forget_memory`, for inspecting and forgetting in chat. `forget_memory` works only if the user's latest message asks to forget. The model has no confirm tool: a click, a whole-message yes read by code, or the user saying it plainly.
+- **`get_open_slots` reads the stored search:** the blueprint's tool list has no way to ask one provider about one day, and the contract's search cannot filter by provider. So this is a local tool over the last search's results, and the hold still checks the slot with the provider.
+- **Search results name days, not times:** the blueprint capped the slots shown. A cap made some days unanswerable.
+- **A bare weekday narrows saved dates:** after "next week", "thur" means next week's Thursday. Words such as "this Thursday" name their own day, and a day outside the saved range is a new date.
+- **The ADK session is deleted after the turn:** deleting it mid-run would break the run. A session busy with another turn stays marked, and goes at the start of its next turn.
+- **The context log names the tools:** the declarations are counted in full, but logged by name, because they are the same on every call.
+
 ## Suggested order
 
 1. **Mock provider:** done.
@@ -257,19 +279,61 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 3. **Workflow and search:** done.
 4. **Approvals and booking saga:** done.
 5. **Cancel and reschedule:** done.
-6. **Memory and ContextAssembler:** includes forgetting and the token budget.
+6. **Memory and ContextAssembler:** done.
 7. **Proactive cancellation, SSE and JSONL traces.**
 8. **Eval harness, table and invariants.**
 9. **Design note, trace excerpt, demo and transcript.**
 
 ## Log
 
+### 3 Nov 2026: Memory and ContextAssembler
+
+- Added the `memory` domain: `memories`, `turn_view`, `context_log` and `session_rotations`, with the migration, REST routes and seed.
+- **ContextAssembler:** on every model call, code throws away ADK's history and builds the request. Filter in SQL, rank by service and words in the message, then trim to 8,000 estimated tokens: large tool results to a cap, older turns, summary, memories. The full request and the counts are logged before the call.
+- **Model tools:** `propose_memory`, `list_memories` and `forget_memory`. The model can propose a fact, but only the user's words or click can make it count.
+- **Search results:** the model no longer sees old tool results, so the latest shortlist is sent as its own section while it still applies. Without this, "book the first one" on a later turn would fail.
+- **UI:** a Memory panel with Confirm, Correct and Forget, and `?user=` to open another user. The trace shows each built context.
+- **Proof:** new `tests/unit/test_memory.py`, 43 UI tests, and only the unit test files this change touches. A live Gemini run saved a fact, used it in a new chat, corrected it and forgot it. After that, neither area name was in `turn_view`, `context_log`, the errand, runs, trace events or ADK rows. `alembic check` on PostgreSQL finds no drift from the models. Headless Chromium: three panels at 1500 px, memory under the trace at 1000 px, one column at 390 px, no sideways scroll, no page errors. **Not run here: the full suite and integration tests.** CI runs those on the PR.
+
+### 3 Nov 2026: The model asks for one provider's times on one day
+
+- **From testing the UI:** the agent invented Tuesday slots for a provider with none. See bug 14 in `BUGS.md`. The user proposed this design after the audit.
+- **Search:** results now give each provider's price, rating and open days, with no times.
+- **`get_open_slots(provider_id, day)`:** a new local tool. A refused slot also returns the real times and open days.
+- **Proof:** new tests in `test_workflow.py`, and the affected unit test files. The same chat replayed on live Gemini: every time it named came from `get_open_slots`, Quick AC Care's missing Tuesday was stated correctly even when the user pushed back, and both bookings reached a correct card. **Not run here: the full suite and integration tests. `test_booking_saga.py` changed, so CI is its first run.**
+- **Still open:** nothing in code checks the times in a reply, only proposals and the card. In the replay the model also misread the saved schedule once, saying Wed and Fri were off, which no tool can catch. It also opened one reply with an awkward "(Wait, ...)" self-correction.
+
+### 3 Nov 2026: Short and loose date words
+
+- **From testing the UI:** "next week sometime", then "lets do thur", never became a date. See bug 13 in `BUGS.md`.
+- **Proof:** new tests in `test_dates.py` and `test_workflow.py`. The same chat replayed on live Gemini: next week became 09/11/2026 to 15/11/2026, and "lets do thur" became 12/11/2026, with a search each time. **Not run here: the full suite and integration tests.**
+- **Still open:** the word check only asks that each word was said somewhere in the chat. "Sat" in "I sat at home" counts as Saturday, and "Mon" in a work schedule counts as Monday. The exact date is always shown, and a booking still needs the card.
+
+### 3 Nov 2026: Memory saves itself, and asks in the chat
+
+- **From testing the UI:** a message that only gave facts saved nothing until the user said "remember that". Then only one of two facts was tried, and it landed as unconfirmed. See `BUGS.md`.
+- **Automatic:** the prompt now tells the model to save lasting facts as soon as they are stated, with one call per fact, and not to save details of only this errand.
+- **In the chat:** a saved fact shows as "Remembered area: Indiranagar" under the reply. A guess shows a "Remember this?" card. Both come from the memory row, not the model's words.
+- **Answering a guess:** a click, or a whole-message yes or no, which code reads before the model runs. The question lasts for one message, so a later "yes" to something else cannot confirm it. An open booking card takes the yes first.
+- **Proof:** new tests in `test_memory.py` and `test_booking_chat.py`, 45 UI tests. Live Gemini, 5 chats: the user's exact message saved both facts with no question. "Nothing before 10 am", worded by the model as "not before 10 am", was asked about. A plumber request with a budget saved nothing. A fact stated beside a request was saved, and the search still ran. **Not run here: the full suite and integration tests.**
+
+### Known limits of memory
+
+- **Noticing a fact is the model's judgement:** only the prompt asks for it, so a fact can be missed or a one-off detail saved. Code only decides whether a proposed fact is trusted. Five live chats are not a measure of how often this happens.
+- **The check does not read meaning:** "I don't like Rahul" could pass as "likes Rahul", because the words match. The user sees "Remembered" in the chat and can correct it.
+- **Asking what is remembered sends every trusted fact:** `list_memories` is not ranked, so when the user asks, facts about other services reach the model for that turn. It saw them in the seeded live run. Unconfirmed, superseded and forgotten facts are still left out.
+- **Redaction matches the text, not the meaning:** a fact the model reworded, such as "Indira Nagar" for "Indiranagar", stays in the stored chat.
+- **Choosing the key is the model's job:** the prompt suggests names. Two different keys for one fact would both stay, and the user would see both on the panel.
+- **A click on a booking card is not in `turn_view`:** a typed answer is. The model still learns the result from the booking status section.
+- **Two saves of one new fact at the same moment:** the unique index stops the second, and the model gets a tool failure. Nothing wrong is stored.
+- **The long seeded chat has no UI path:** `?user=seed-user` opens a new chat. Use the API with session `seed-chat`.
+
 ### 3 Nov 2026: GitHub CI
 
 - Added `.github/workflows/ci.yml`. It runs on every pull request and on pushes to `main`. Three jobs: server checks and unit tests, web types, tests and build, and integration tests in Compose. No secrets are needed, because the model is scripted.
 - **Why:** while iterating, only the relevant unit tests run locally now, and CI runs the full suite.
 - **Found:** a dry run on a clean copy failed 6 tests in `test_model_retry.py`, which passed here only because this machine has a real `GOOGLE_API_KEY`. See `BUGS.md`.
-- **Proof:** `actionlint` passes. The server and web steps ran on a clean copy with an empty environment. After the fix, the 6 failures were rerun on their own in that clean environment, not the whole server step. **The workflow itself has not run on GitHub yet,** because that needs a push. The integration job has only run through `make test-integration` here.
+- **Proof:** `actionlint` passes. The server and web steps ran on a clean copy with an empty environment. After the fix, the 6 failures were rerun on their own in that clean environment, not the whole server step. All three jobs then passed on GitHub on PR 7.
 
 ### 3 Nov 2026: Cancel and reschedule
 

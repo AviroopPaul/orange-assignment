@@ -115,6 +115,27 @@ class ProposeRescheduleArgs(_Strict):
     time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
+class GetOpenSlotsArgs(_Strict):
+    provider_id: str = Field(min_length=1, max_length=20)
+    day: str = Field(min_length=1, max_length=40)
+
+
+class ProposeMemoryArgs(_Strict):
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    value: str = Field(min_length=1, max_length=300)
+    quote: str = Field(min_length=1, max_length=500)
+    scope: str = Field(default="all", pattern=r"^[a-z_]{1,40}$")
+
+
+class ForgetMemoryArgs(_Strict):
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    scope: str = Field(default="all", pattern=r"^[a-z_]{1,40}$")
+
+
+class ListMemoriesArgs(_Strict):
+    pass
+
+
 class ResolveDatesArgs(_Strict):
     phrase: str = Field(min_length=1, max_length=100)
 

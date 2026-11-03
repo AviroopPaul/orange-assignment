@@ -608,6 +608,10 @@ class ApprovalService:
         lines.extend(f"Latest update, written by the system: {text}" for text in latest)
         return "\n".join(lines) or "No booking activity in this chat."
 
+    async def latest_updates(self, user_id: str, session_id: str, limit: int) -> list[str]:
+        """What happened to bookings in this chat, in the system's own words."""
+        return await self._notifications.latest_texts(user_id, session_id, limit)
+
     # Answering
 
     async def decide_from_message(

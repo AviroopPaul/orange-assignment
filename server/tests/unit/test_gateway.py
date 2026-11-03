@@ -161,7 +161,7 @@ def test_consequential_tools_need_approval_and_only_the_saga_can_call_them(tool:
     assert spec.callers == {Caller.SAGA}
 
 
-def test_model_can_only_reach_read_tools() -> None:
+def test_model_can_only_reach_read_and_propose_tools() -> None:
     allowed = {name for name, spec in TOOLS.items() if Caller.MODEL in spec.callers}
     assert allowed == {
         "update_request",
@@ -169,7 +169,11 @@ def test_model_can_only_reach_read_tools() -> None:
         "propose_booking",
         "propose_cancel",
         "propose_reschedule",
+        "propose_memory",
+        "list_memories",
+        "forget_memory",
         "search_providers",
+        "get_open_slots",
         "get_provider",
         "list_bookings",
         "get_booking_status",

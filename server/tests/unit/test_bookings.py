@@ -83,10 +83,12 @@ class Stack:
         args = await self.core.workflows.begin_search(USER, session, recorder)
         result = await self.core.gateway.call("search_providers", args, self.context(recorder))
         assert result.ok, result
-        found = await self.core.workflows.finish_search(
-            USER, session, result.data["providers"], recorder
-        )
-        return found["providers"]
+        await self.core.workflows.finish_search(USER, session, result.data["providers"], recorder)
+        async with self.core.db.session_scope() as scope:
+            from app.domains.workflow.repository import WorkflowRepository
+
+            workflow = await WorkflowRepository(scope).get_active(USER, session)
+        return [{"id": key, **item} for key, item in workflow.shortlist.items()]
 
     async def card(
         self, provider_suffix: str = "-01", session: str = SESSION, **extra: Any

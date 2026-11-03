@@ -1,8 +1,10 @@
 """ADK callbacks that report into the current run's trace."""
 
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import date
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
@@ -11,9 +13,11 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
+from app.domains.agent.context import apply_context
 from app.domains.bookings.matching import claimed_actions
 from app.domains.bookings.service import ApprovalService
 from app.domains.gateway.service import CallContext, ToolBudgetExhausted, ToolGateway
+from app.domains.memory.service import MemoryService
 from app.domains.tracing.service import ModelUsage, RunRecorder
 from app.domains.workflow.service import WorkflowService
 
@@ -33,7 +37,12 @@ class TurnTelemetry:
     workflow: WorkflowService
     session_id: str
     bookings: ApprovalService
+    memory: MemoryService
+    today: Callable[[], date]
+    context_budget: int
     call_started_at: float = 0.0
+    # The log row for the call in progress, so the real token count can join it.
+    context_id: int | None = None
     # A statement about a booking is fair once the source of truth was read in this turn.
     read_bookings: bool = False
 
@@ -46,6 +55,17 @@ async def before_model(
 ) -> LlmResponse | None:
     turn = current_turn.get()
     if turn is not None:
+        turn.context_id = await apply_context(
+            llm_request,
+            recorder=turn.recorder,
+            workflow=turn.workflow,
+            bookings=turn.bookings,
+            memory=turn.memory,
+            user_id=turn.tool_context.user_id,
+            session_id=turn.session_id,
+            today=turn.today(),
+            budget=turn.context_budget,
+        )
         turn.call_started_at = time.monotonic()
     return None
 
@@ -57,6 +77,8 @@ async def after_model(
     if turn is None:
         return None
     usage = llm_response.usage_metadata
+    if usage and usage.prompt_token_count and turn.context_id is not None:
+        await turn.memory.note_actual_tokens(turn.context_id, usage.prompt_token_count)
     parts = llm_response.content.parts if llm_response.content else None
     requested_tools = [part.function_call.name for part in parts or [] if part.function_call]
     await turn.recorder.model_call(

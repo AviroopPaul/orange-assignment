@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../../lib/api";
+import { USER_ID } from "../../lib/user";
+import { confirmMemory, forgetMemory } from "../memory/api";
+import type { MemoryItem } from "../memory/types";
 import { answerApproval, fetchBookingState, fetchNotifications, sendMessage } from "./api";
 import type { ApprovalCard, ChatMessage, Outcome } from "./types";
 
 // The server has no history endpoint yet, so this browser keeps the visible chat.
-// The model's own memory of the conversation lives on the server, in the ADK session.
-const STORAGE_KEY = "errand.chat.v1";
-const USER_ID = "demo-user";
+// The model reads the conversation from the server, in `turn_view`.
+const STORAGE_KEY = USER_ID === "demo-user" ? "errand.chat.v1" : `errand.chat.v1.${USER_ID}`;
 const POLL_MS = 2000;
 // The saga said it is still trying, so more news will come.
 const STILL_RUNNING = "booking_not_confirmed";
@@ -44,7 +46,9 @@ export interface SendResult {
 
 function closeCards(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((message) =>
-    message.approvalOpen ? { ...message, approvalOpen: false } : message,
+    message.approvalOpen || message.memoryQuestions?.length
+      ? { ...message, approvalOpen: false, memoryQuestions: [] }
+      : message,
   );
 }
 
@@ -52,6 +56,8 @@ export function useChat(onRunFinished: (runId: string) => void) {
   const [chat, setChat] = useState<StoredChat>(loadChat);
   const [sending, setSending] = useState(false);
   const [answering, setAnswering] = useState(false);
+  // Bumped when a click in the chat changes a memory, so the panel reads again.
+  const [memoryVersion, setMemoryVersion] = useState(0);
   const inFlight = useRef(false);
   const nextId = useRef(0);
 
@@ -113,6 +119,7 @@ export function useChat(onRunFinished: (runId: string) => void) {
         outcome: Outcome;
         reason?: string | null;
         approval?: ApprovalCard | null;
+        memory?: { saved: MemoryItem[]; to_confirm: MemoryItem[] };
       },
       sessionId: string,
     ) => {
@@ -130,6 +137,8 @@ export function useChat(onRunFinished: (runId: string) => void) {
             outcome: reply.outcome,
             reason: reply.reason,
             ...(reply.approval ? { approval: reply.approval, approvalOpen: true } : {}),
+            memorySaved: reply.memory?.saved ?? [],
+            memoryQuestions: reply.memory?.to_confirm ?? [],
           },
         ],
       }));
@@ -154,6 +163,7 @@ export function useChat(onRunFinished: (runId: string) => void) {
             outcome: response.outcome,
             reason: response.reason,
             approval: response.approval,
+            memory: response.memory,
           },
           response.session_id,
         );
@@ -199,6 +209,42 @@ export function useChat(onRunFinished: (runId: string) => void) {
       }
     },
     [addMessage, addReply, onRunFinished],
+  );
+
+  const answerMemory = useCallback(
+    async (item: MemoryItem, remember: boolean): Promise<void> => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setAnswering(true);
+      try {
+        const saved = remember
+          ? await confirmMemory(item.id, USER_ID)
+          : (await forgetMemory(item.id, USER_ID), null);
+        setChat((current) => ({
+          ...current,
+          messages: current.messages.map((message) =>
+            message.memoryQuestions?.some((question) => question.id === item.id)
+              ? {
+                  ...message,
+                  memoryQuestions: message.memoryQuestions.filter(
+                    (question) => question.id !== item.id,
+                  ),
+                  memorySaved: saved ? [...(message.memorySaved ?? []), saved] : message.memorySaved,
+                }
+              : message,
+          ),
+        }));
+        setMemoryVersion((version) => version + 1);
+      } catch (error) {
+        const text =
+          error instanceof ApiError ? error.message : "Something went wrong. Please try again.";
+        addMessage({ id: makeId(), role: "error", text });
+      } finally {
+        inFlight.current = false;
+        setAnswering(false);
+      }
+    },
+    [addMessage],
   );
 
   const { watching, sessionId, lastNotificationId } = chat;
@@ -250,6 +296,8 @@ export function useChat(onRunFinished: (runId: string) => void) {
     sending: sending || answering,
     send,
     answer,
+    answerMemory,
+    memoryVersion,
     reset,
   };
 }

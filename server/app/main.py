@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.domains.bookings.router import router as bookings_router
 from app.domains.chat.router import router as chat_router
 from app.domains.jobs.broker import build_broker
+from app.domains.memory.router import router as memory_router
 from app.domains.notifications.router import router as notifications_router
 from app.domains.system.router import router as system_router
 from app.domains.tracing.router import router as tracing_router
@@ -53,6 +54,7 @@ def create_app(container_factory: ContainerFactory = _build_live_container) -> F
     app.include_router(chat_router)
     app.include_router(bookings_router)
     app.include_router(notifications_router)
+    app.include_router(memory_router)
     app.include_router(tracing_router)
     app.add_exception_handler(SQLAlchemyError, _database_unavailable)
     app.add_exception_handler(OSError, _database_unavailable)

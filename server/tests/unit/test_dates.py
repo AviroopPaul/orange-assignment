@@ -325,3 +325,59 @@ def test_a_time_the_user_gave_counts(at: str, said: str) -> None:
 def test_a_time_the_user_never_gave_does_not(at: str, said: str) -> None:
     """From the user's chat: the model picked 10:00 three times, and nobody had said it."""
     assert time_is_stated(at, said) is False
+
+
+# From a real chat: "next week sometime", then "lets do thur", was refused three times.
+
+
+TODAY_TUESDAY = date(2026, 11, 3)
+
+
+def test_the_days_a_user_shortens_count_as_their_own_words() -> None:
+    said = "next week sometime\nlets do thur"
+    assert is_grounded("Thursday next week", said)
+    assert is_grounded("thur next week", said)
+    assert is_grounded("Friday", "I can do fri")
+    assert is_grounded("14 November", "the 14th of nov")
+    assert is_grounded("tomorrow", "tmrw works")
+    # A day they never named is still refused.
+    assert not is_grounded("Wednesday next week", said)
+    assert not is_grounded("Thursday next week", "lets do thur")
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["next week sometime", "sometime next week", "anytime next week", "next week whenever"],
+)
+def test_sometime_next_week_is_the_whole_week(phrase: str) -> None:
+    resolved = resolve_phrase(phrase, TODAY_TUESDAY)
+    assert resolved is not None
+    assert (resolved.start, resolved.end) == (date(2026, 11, 9), date(2026, 11, 15))
+
+
+def test_sometime_with_no_day_is_not_a_date() -> None:
+    assert resolve_phrase("sometime", TODAY_TUESDAY) is None
+    assert resolve_phrase("whenever", TODAY_TUESDAY) is None
+
+
+def test_any_day_still_means_this_week() -> None:
+    resolved = resolve_phrase("any day", TODAY_TUESDAY)
+    assert resolved is not None and resolved.label.startswith("This week")
+
+
+@pytest.mark.parametrize("phrase", ["thur next week", "Thursday next week", "next week thur"])
+def test_a_short_day_in_next_week(phrase: str) -> None:
+    resolved = resolve_phrase(phrase, TODAY_TUESDAY)
+    assert resolved is not None and resolved.start == date(2026, 11, 12)
+
+
+def test_the_week_belongs_to_both_days_in_an_or() -> None:
+    """It used to read as this Tuesday, today, through next Thursday."""
+    resolved = resolve_phrase("Tuesday or Thursday next week", TODAY_TUESDAY)
+    assert resolved is not None
+    assert (resolved.start, resolved.end) == (date(2026, 11, 10), date(2026, 11, 12))
+
+
+def test_a_shortened_tomorrow_is_read() -> None:
+    resolved = resolve_phrase("tmrw", TODAY_TUESDAY)
+    assert resolved is not None and resolved.start == date(2026, 11, 4)

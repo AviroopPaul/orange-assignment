@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     tool_retry_backoff_s: float = 0.2
 
     max_model_calls: int = 8
+    context_budget_tokens: int = 8000
     max_tool_calls: int = 12
     run_deadline_s: float = 120
     turn_lock_ttl_s: float = 150

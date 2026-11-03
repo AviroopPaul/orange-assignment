@@ -81,6 +81,14 @@ def rejection(name: str, value: Any, user_text: str) -> str | None:
     return None
 
 
+def only_remembered(value: Any, user_text: str, remembered: str) -> bool:
+    """The detail is in what we remember, and not in anything said in this chat."""
+    said = user_text.casefold()
+    known = remembered.casefold()
+    words = value if isinstance(value, list) else [value]
+    return any(str(word).casefold() in known and str(word).casefold() not in said for word in words)
+
+
 def pair_rejections(request: dict[str, Any]) -> dict[str, str]:
     """A rule across two fields, checked on the merged request."""
     problems = {}
