@@ -69,7 +69,7 @@ _ALREADY_SAVED: dict[str, Any] = {
 _BOOKING_RUNNING = frozenset({WorkflowState.EXECUTING, WorkflowState.VERIFYING})
 _BOOKING_IN_PROGRESS: dict[str, Any] = {
     "error": "booking_in_progress",
-    "message": "A booking is in progress and not confirmed yet. "
+    "message": "A booking request is in progress and not confirmed yet. "
     "Nothing can change until it finishes. Tell the user that.",
 }
 # Changing the request while a card is on screen, or after a search, needs a new search.
@@ -88,7 +88,7 @@ class ProposalTarget:
     max_budget: int | None
 
 
-def _same_time(first: str, second: str) -> bool:
+def same_time(first: str, second: str) -> bool:
     try:
         one, other = datetime.fromisoformat(first), datetime.fromisoformat(second)
     except ValueError:
@@ -96,6 +96,25 @@ def _same_time(first: str, second: str) -> bool:
     return (one if one.tzinfo else one.replace(tzinfo=LOCAL_TZ)) == (
         other if other.tzinfo else other.replace(tzinfo=LOCAL_TZ)
     )
+
+
+def _read_phrase(phrase: str, user_text: str, today: date) -> dates.ResolvedDates | dict[str, Any]:
+    """The dates in the user's own words, or why they cannot be used."""
+    if not dates.is_grounded(phrase, user_text):
+        return {
+            "error": "date_not_stated",
+            "message": "The user has not said this. Ask them which dates they want.",
+        }
+    resolved = dates.resolve_phrase(phrase, today)
+    if resolved is None:
+        return {
+            "error": "date_not_understood",
+            "message": "Ask the user for a specific day or date.",
+        }
+    problem = dates.problem_with(resolved, today)
+    if problem:
+        return {"error": "date_not_usable", "message": problem}
+    return resolved
 
 
 class WorkflowService:
@@ -229,24 +248,9 @@ class WorkflowService:
             known = self._known_dates(workflow.request, phrase)
             if known is not None:
                 return _Change(result=known)
-            if not dates.is_grounded(phrase, workflow.user_text):
-                return _Change(
-                    result={
-                        "error": "date_not_stated",
-                        "message": "The user has not said this. Ask them which dates they want.",
-                    }
-                )
-            resolved = dates.resolve_phrase(phrase, today)
-            if resolved is None:
-                return _Change(
-                    result={
-                        "error": "date_not_understood",
-                        "message": "Ask the user for a specific day or date.",
-                    }
-                )
-            problem = dates.problem_with(resolved, today)
-            if problem:
-                return _Change(result={"error": "date_not_usable", "message": problem})
+            resolved = _read_phrase(phrase, workflow.user_text, today)
+            if isinstance(resolved, dict):
+                return _Change(result=resolved)
 
             start, end = resolved.start.isoformat(), resolved.end.isoformat()
             request = workflow.request
@@ -275,6 +279,29 @@ class WorkflowService:
             )
 
         return (await self._apply(user_id, session_id, decide, recorder)).result
+
+    async def read_day_and_time(
+        self, user_id: str, session_id: str, phrase: str, at: str
+    ) -> date | dict[str, Any]:
+        """One day and a time from the user's own words, for moving a booking. This saves nothing,
+        so it cannot change the dates of an errand in progress."""
+        async with self._db.session_scope() as session:
+            workflow = await WorkflowRepository(session).get_active(user_id, session_id)
+        said = workflow.user_text if workflow else ""
+        resolved = _read_phrase(phrase, said, self._today())
+        if isinstance(resolved, dict):
+            return resolved
+        if resolved.start != resolved.end:
+            return {
+                "error": "need_one_day",
+                "message": f"That covers {resolved.label}. Ask which day they want.",
+            }
+        if not dates.time_is_stated(at, said):
+            return {
+                "error": "time_not_stated",
+                "message": "The user has not said a time. Ask what time they want. Never pick one.",
+            }
+        return resolved.start
 
     async def snapshot(self, user_id: str, session_id: str) -> RequestSnapshot:
         async with self._db.session_scope() as session:
@@ -442,7 +469,7 @@ class WorkflowService:
                 "error": "provider_not_in_results",
                 "message": "That provider is not in the latest results. Choose one that is.",
             }
-        match = next((item for item in provider["slots"] if _same_time(item, slot)), None)
+        match = next((item for item in provider["slots"] if same_time(item, slot)), None)
         if match is None:
             return {
                 "error": "slot_not_in_results",
@@ -482,6 +509,18 @@ class WorkflowService:
         ):
             raise WorkflowConflict(str(workflow_id))
         return moves
+
+    async def close_change_in(
+        self, session: AsyncSession, workflow_id: uuid.UUID
+    ) -> list[tuple[WorkflowState, WorkflowState]]:
+        """A cancel or a move has finished. An errand in progress carries on where it was."""
+        workflow = await WorkflowRepository(session).get_by_id(workflow_id, lock=True)
+        has_errand = workflow is not None and any(
+            details.field_value(workflow.request, name) not in (None, "", [])
+            for name in details.ALL_FIELDS
+        )
+        target = WorkflowState.COMPARING if has_errand else WorkflowState.DONE
+        return await self.move_in(session, workflow_id, WorkflowState.VERIFYING, target)
 
     async def other_slots(
         self, workflow_id: uuid.UUID, provider_id: str, taken_slot: str, limit: int = 3

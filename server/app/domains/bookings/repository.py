@@ -12,6 +12,11 @@ from app.domains.bookings.models import Approval, ApprovalStatus, AttemptStatus,
 
 _PENDING = ApprovalStatus.PENDING.value
 _OPEN = AttemptStatus.OPEN.value
+_VERIFIED = (
+    AttemptStatus.BOOKED.value,
+    AttemptStatus.CANCELLED.value,
+    AttemptStatus.RESCHEDULED.value,
+)
 
 
 class BookingRepository:
@@ -113,17 +118,24 @@ class BookingRepository:
             )
         )
 
-    async def has_booked_attempt(self, user_id: str, session_id: str) -> bool:
-        found = await self._session.scalar(
-            select(BookingAttempt.id)
+    async def open_attempt_for_booking(self, booking_id: str) -> BookingAttempt | None:
+        return await self._session.scalar(
+            select(BookingAttempt).where(
+                BookingAttempt.booking_id == booking_id, BookingAttempt.status == _OPEN
+            )
+        )
+
+    async def verified_actions(self, user_id: str, session_id: str) -> set[str]:
+        rows = await self._session.scalars(
+            select(BookingAttempt.action)
             .where(
                 BookingAttempt.user_id == user_id,
                 BookingAttempt.session_id == session_id,
-                BookingAttempt.status == AttemptStatus.BOOKED.value,
+                BookingAttempt.status.in_(_VERIFIED),
             )
-            .limit(1)
+            .distinct()
         )
-        return found is not None
+        return set(rows)
 
     async def claim_attempt(
         self, attempt_id: uuid.UUID, now: datetime, lease: timedelta

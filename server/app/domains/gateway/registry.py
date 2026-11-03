@@ -13,6 +13,8 @@ from app.domains.gateway.schemas import (
     HoldSlotArgs,
     ListBookingsArgs,
     ProposeBookingArgs,
+    ProposeCancelArgs,
+    ProposeRescheduleArgs,
     RescheduleArgs,
     ResolveDatesArgs,
     SearchProvidersArgs,
@@ -56,6 +58,15 @@ _SPECS = (
     # Takes a hold and shows the user a card. Nothing else follows without their approval.
     ToolSpec(
         "propose_booking", ProposeBookingArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True
+    ),
+    # Each only reads the booking and shows a card. The change waits for the user's approval.
+    ToolSpec("propose_cancel", ProposeCancelArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True),
+    ToolSpec(
+        "propose_reschedule",
+        ProposeRescheduleArgs,
+        frozenset({Caller.MODEL}),
+        NO_RETRY,
+        local=True,
     ),
     ToolSpec("search_providers", SearchProvidersArgs, EVERYONE, READ_RETRY),
     ToolSpec("get_provider", GetProviderArgs, EVERYONE, READ_RETRY),

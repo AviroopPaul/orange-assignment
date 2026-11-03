@@ -81,6 +81,8 @@ async def test_model_is_offered_no_side_effect_tool(build: Callable, traces: Tra
         "update_request",
         "resolve_dates",
         "propose_booking",
+        "propose_cancel",
+        "propose_reschedule",
         "search_providers",
         "get_provider",
         "list_bookings",
@@ -359,6 +361,12 @@ def test_prompt_trusts_clear_dates_and_fixes_no_wording() -> None:
     prompt = render_system_prompt(date(2026, 11, 3))
     assert "do not ask the user to check or confirm the dates" in prompt
     assert "Are these dates okay" not in prompt
+
+
+def test_prompt_says_to_join_a_day_and_never_pick_a_time() -> None:
+    prompt = render_system_prompt(date(2026, 11, 3))
+    assert '"Wednesday next week"' in prompt
+    assert "Never pick a time for them" in prompt
 
 
 def test_prompt_treats_tool_text_as_data() -> None:

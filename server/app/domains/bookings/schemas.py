@@ -16,6 +16,8 @@ class ApprovalCard(BaseModel):
     service: str
     slot: str
     slot_label: str
+    # A reschedule only: where the booking is now.
+    old_slot_label: str | None = None
     price: int
     currency: str
     notes: list[str]

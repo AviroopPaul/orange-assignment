@@ -474,3 +474,98 @@ async def test_http_reject_route(flow: Flow) -> None:
         )
     assert rejected.json()["status"] == "rejected"
     assert (await flow.approvals())[0].status == ApprovalStatus.REJECTED.value
+
+
+# Cancelling and moving, through the real chat turn
+
+
+async def _booked_with_flow(flow: Flow, provider_scenario: Callable) -> str:
+    await provider_scenario(book_outcomes=["success"])
+    await flow.show_card()
+    await flow.say("yes")
+    await flow.run_jobs()
+    async with flow.core.db.session_scope() as session:
+        attempt = await session.scalar(select(BookingAttempt))
+    return attempt.booking_id
+
+
+async def test_cancel_from_the_chat_needs_the_users_own_words(
+    flow: Flow, provider_scenario: Callable
+) -> None:
+    booking_id = await _booked_with_flow(flow, provider_scenario)
+    response = await flow.say(
+        "cancel my plumber booking",
+        ToolCall("list_bookings", {}),
+        ToolCall("propose_cancel", {"booking_id": booking_id}),
+        "Please check the card. It is not cancelled yet.",
+    )
+    assert response.outcome == Outcome.AWAITING_APPROVAL
+    assert response.approval is not None
+    assert response.approval.action == "cancel"
+
+    # This goes to the model, and it approves nothing.
+    wrong = await flow.say("book it", "That card is about cancelling. Please answer it.")
+    assert wrong.outcome == Outcome.AWAITING_APPROVAL
+    assert len([row for row in await flow.attempts() if row.action == "cancel"]) == 0
+
+    right = await flow.say("cancel it")
+    assert flow.model.requests == []
+    assert right.outcome == Outcome.VERIFYING
+    await flow.run_jobs()
+    closed = next(row for row in await flow.attempts() if row.action == "cancel")
+    assert closed.status == "cancelled"
+
+
+async def test_the_model_cannot_say_it_was_cancelled_after_only_reading_the_list(
+    flow: Flow, provider_scenario: Callable
+) -> None:
+    """Reading the list used to make any claim fair. A card still waiting makes this one false."""
+    booking_id = await _booked_with_flow(flow, provider_scenario)
+    response = await flow.say(
+        "cancel my booking",
+        ToolCall("list_bookings", {}),
+        ToolCall("propose_cancel", {"booking_id": booking_id}),
+        "Your booking has been cancelled.",
+    )
+    assert "has been cancelled" not in response.reply
+    assert response.approval is not None
+    trace = await flow.core.traces.get_trace(response.run_id)
+    assert "false_claim_blocked" in [event.kind for event in trace.events]
+
+
+async def test_a_verified_booking_does_not_make_a_cancel_claim_fair(
+    flow: Flow, provider_scenario: Callable
+) -> None:
+    """A booked attempt in this chat used to let every claim through."""
+    await _booked_with_flow(flow, provider_scenario)
+    response = await flow.say("cancel it please", "Your booking has been cancelled.")
+    assert "has been cancelled" not in response.reply
+
+
+async def test_move_from_the_chat_shows_a_card_with_both_times(
+    flow: Flow, provider_scenario: Callable
+) -> None:
+    booking_id = await _booked_with_flow(flow, provider_scenario)
+    response = await flow.say(
+        "move it to 20 Nov at 10",
+        ToolCall("list_bookings", {}),
+        ToolCall(
+            "propose_reschedule", {"booking_id": booking_id, "day": "20 Nov", "time": "10:00"}
+        ),
+        "Please check the card. It has not moved yet.",
+    )
+    assert response.approval is not None
+    assert response.approval.action == "reschedule"
+    assert response.approval.old_slot_label is not None
+    assert "20/11/2026, 10:00" in response.approval.slot_label
+
+
+async def test_the_model_has_no_way_to_cancel_or_move_directly(flow: Flow) -> None:
+    await flow.say("hello", "Hi.")
+    offered = {
+        item.name
+        for tool in flow.model.requests[0].config.tools or []
+        for item in tool.function_declarations
+    }
+    assert {"propose_cancel", "propose_reschedule"} <= offered
+    assert not {"cancel", "reschedule", "book"} & offered

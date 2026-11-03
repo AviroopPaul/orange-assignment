@@ -94,8 +94,8 @@ export function ChatPanel({
           <div className="empty">
             <p className="empty-title">Tell the agent what you need done at home.</p>
             <p className="notice">
-              The agent can search and compare providers, show your bookings and book a slot once
-              you confirm it. Cancelling, rescheduling and memory are not connected yet.
+              The agent can search and compare providers, show your bookings, and book, cancel or
+              move a booking once you confirm it. Memory is not connected yet.
             </p>
             <p className="examples-label">Try one of these</p>
             <div className="examples">

@@ -75,7 +75,24 @@ Candidates for the "three real bugs" deliverable. Each one really happened, and 
 - **Fix:** On load, the page asks `/bookings/current` what is open, and shows the card or follows the running booking. A card the server has closed also closes on the page. `index.html` is now served with `no-cache`, so a reload picks up a new build.
 - **Regression tests:** `test_http_current_booking_gives_a_page_the_open_card_again` in `server/tests/unit/test_booking_chat.py`, and the "after a reload" tests in `web/src/App.test.tsx`.
 
+## 11. The false-claim guard let any claim through once a booking was read or verified
+
+- **What broke:** The guard allowed any "it has happened" text if the model had read the bookings in that turn, or if the chat had any verified booking. Cancelling always reads the bookings first, so "Your booking has been cancelled" would have passed while the card was still waiting for a yes. Found while designing cancel, before it was built, by reading the guard.
+- **Why:** The guard asked "did something verified happen here?", not "did this thing happen?". That was good enough with only one action.
+- **Fix:** It now reads which action a claim names. A claim about anything still waiting for a yes or a check is blocked, even after a list read. A claim is fair only if that same action was verified or the list was read.
+- **Regression tests:** `test_the_model_cannot_say_it_was_cancelled_after_only_reading_the_list` and `test_a_verified_booking_does_not_make_a_cancel_claim_fair` in `server/tests/unit/test_booking_chat.py`.
+
+## 12. "Wednesday next week" gave this Wednesday, at a time nobody chose
+
+- **What broke:** The user said "Move my AC servicing to next week", then "around wednesday". The card offered Wed 04/11/2026 at 10:00, which is this week, at a time they never gave. "Wednesday next week" and "11th I guess?" then got only "please give the exact date". Found by the user in the UI.
+- **Why:** Four faults, seen in the trace. The model sent only "wednesday", losing "next week" from the earlier message. The date reader did not know "Wednesday next week" or a bare "11th". The model rewrote "11th" as "11 Nov", which was refused as words the user never said. And it sent `time: 10:00` all three times, because only the prompt said not to pick a time.
+- **Fix:** The reader now knows a weekday in a named week and a bare ordinal. Code refuses a time the user never said, with "the same time" as the one exception. The prompt says to join the user's words across messages. That last part is guidance only, and the card still shows the exact date.
+- **Why tests missed it:** They all passed a clean day and time, the way the code expected. The user answered over several messages, in loose words.
+- **Regression tests:** `test_a_weekday_next_week_is_in_next_calendar_week`, `test_a_bare_ordinal_is_the_next_one_to_come_round` and `test_a_time_the_user_never_gave_does_not` in `server/tests/unit/test_dates.py`, and `test_the_model_cannot_pick_a_time` in `server/tests/unit/test_booking_changes.py`.
+
 ## Smaller
+
+**Retry tests needed a real API key.** `test_model_retry.py` passed `test-key` to `Settings`, but the Gemini client reads `GOOGLE_API_KEY` from the environment. The tests passed here only because this machine has a real key, and that key went to the local stub server. A dry run for CI found it. The tests now set a fake key in the environment. Separately, `Settings.google_api_key` only says whether a key is set: it is not what reaches the client, which matters only if the app runs outside Compose with the key only in `.env`.
 
 **The agent asked again after the user had answered.** Live Gemini re-sent the date string to `resolve_dates`. It was refused as words the user never said, so the agent asked a second time. `resolve_dates` now recognises dates already saved, and says to search. `test_repeating_saved_dates_says_to_search_instead_of_refusing` guards it.
 

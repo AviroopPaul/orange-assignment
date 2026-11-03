@@ -40,6 +40,7 @@ class CountingTransport(httpx.AsyncBaseTransport):
         self.calls: list[str] = []
         self.down: set[str] = set()
         self.hang: set[str] = set()
+        self.always_503: set[str] = set()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         tool = request.url.path.rsplit("/", 1)[-1]
@@ -48,6 +49,8 @@ class CountingTransport(httpx.AsyncBaseTransport):
             raise httpx.ConnectError("provider is down")
         if tool in self.hang:
             await asyncio.sleep(30)
+        if tool in self.always_503:
+            return httpx.Response(503, json={"error": "transient_error", "message": "Try later."})
         return await self.inner.handle_async_request(request)
 
 

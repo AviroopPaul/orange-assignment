@@ -4,7 +4,13 @@ from datetime import date
 
 import pytest
 
-from app.domains.workflow.dates import display, is_grounded, problem_with, resolve_phrase
+from app.domains.workflow.dates import (
+    display,
+    is_grounded,
+    problem_with,
+    resolve_phrase,
+    time_is_stated,
+)
 
 TODAY = date(2026, 11, 3)
 
@@ -212,3 +218,110 @@ def test_very_long_range_is_a_problem() -> None:
 )
 def test_dates_must_come_from_the_users_own_words(phrase: str, said: str, expected: bool) -> None:
     assert is_grounded(phrase, said) is expected
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Wednesday next week",
+        "wednesday of next week",
+        "next week Wednesday",
+        "next week on Wednesday",
+        "on Wednesday next week",
+    ],
+)
+def test_a_weekday_next_week_is_in_next_calendar_week(phrase: str) -> None:
+    """From the user's chat: this was refused, and a lone "Wednesday" meant this week."""
+    resolved = resolve_phrase(phrase, TODAY)
+    assert resolved is not None
+    assert resolved.start == resolved.end == date(2026, 11, 11)
+    assert "11/11/2026" in resolved.label
+
+
+def test_a_weekday_this_week_can_be_said_outright() -> None:
+    resolved = resolve_phrase("Friday this week", TODAY)
+    assert resolved is not None
+    assert resolved.start == date(2026, 11, 6)
+
+
+def test_monday_next_week_and_sunday_next_week_are_the_ends_of_that_week() -> None:
+    monday, sunday = (
+        resolve_phrase("Monday next week", TODAY),
+        resolve_phrase("Sunday next week", TODAY),
+    )
+    assert monday is not None and monday.start == date(2026, 11, 9)
+    assert sunday is not None and sunday.start == date(2026, 11, 15)
+
+
+@pytest.mark.parametrize(
+    ("phrase", "expected"),
+    [
+        ("11th", date(2026, 11, 11)),
+        ("the 11th", date(2026, 11, 11)),
+        ("3rd", date(2026, 11, 3)),
+        ("2nd", date(2026, 12, 2)),
+        ("1st", date(2026, 12, 1)),
+    ],
+)
+def test_a_bare_ordinal_is_the_next_one_to_come_round(phrase: str, expected: date) -> None:
+    resolved = resolve_phrase(phrase, TODAY)
+    assert resolved is not None
+    assert resolved.start == expected
+
+
+def test_a_bare_ordinal_the_month_does_not_have_is_not_guessed() -> None:
+    assert resolve_phrase("31st", TODAY) is None
+
+
+def test_a_bare_ordinal_rolls_over_the_year() -> None:
+    resolved = resolve_phrase("5th", date(2026, 12, 20))
+    assert resolved is not None
+    assert resolved.start == date(2027, 1, 5)
+
+
+@pytest.mark.parametrize(
+    ("at", "said"),
+    [
+        ("10:00", "move it to Friday at 10am"),
+        ("10:00", "10 am please"),
+        ("10:00", "10 a.m."),
+        ("10:00", "at 10"),
+        ("10:00", "around 10"),
+        ("10:00", "10:00"),
+        ("10:00", "10 o'clock"),
+        ("10:00", "what time?\n10"),
+        ("14:00", "2pm"),
+        ("14:00", "at 14:00"),
+        ("14:00", "at 2"),
+        ("12:00", "12 noon"),
+        ("12:00", "at noon"),
+        ("12:00", "12pm"),
+        ("10:30", "10:30"),
+        ("09:00", "at 09:00"),
+        ("09:00", "9:00"),
+        ("10:00", "keep the same time"),
+    ],
+)
+def test_a_time_the_user_gave_counts(at: str, said: str) -> None:
+    assert time_is_stated(at, said) is True
+
+
+@pytest.mark.parametrize(
+    ("at", "said"),
+    [
+        ("10:00", "move my AC servicing to next week"),
+        ("10:00", "around wednesday"),
+        ("10:00", "on the 10th"),
+        ("10:00", "10 Nov"),
+        ("10:00", "11th I guess?"),
+        ("10:00", "10pm"),
+        ("22:00", "10am"),
+        ("14:00", "2am"),
+        ("10:30", "at 10"),
+        ("12:00", "morning"),
+        ("00:00", "at noon"),
+    ],
+)
+def test_a_time_the_user_never_gave_does_not(at: str, said: str) -> None:
+    """From the user's chat: the model picked 10:00 three times, and nobody had said it."""
+    assert time_is_stated(at, said) is False

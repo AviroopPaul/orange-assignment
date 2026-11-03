@@ -13,6 +13,12 @@ const SERVICE_LABELS: Record<string, string> = {
   house_cleaning: "House cleaning",
 };
 
+const HEADINGS: Record<string, string> = {
+  book: "Confirm this booking",
+  cancel: "Cancel this booking?",
+  reschedule: "Move this booking?",
+};
+
 interface ApprovalCardViewProps {
   card: ApprovalCard;
   open: boolean;
@@ -22,7 +28,7 @@ interface ApprovalCardViewProps {
 
 /** Every value here comes from the server's approval row, never from the model's reply. */
 export function ApprovalCardView({ card, open, busy, onAnswer }: ApprovalCardViewProps) {
-  const heading = "Confirm this booking";
+  const heading = HEADINGS[card.action] ?? HEADINGS.book;
   return (
     <section className={`approval ${open ? "open" : "closed"}`} aria-label={heading}>
       <h3>{heading}</h3>
@@ -35,8 +41,14 @@ export function ApprovalCardView({ card, open, busy, onAnswer }: ApprovalCardVie
           <dt>Service</dt>
           <dd>{SERVICE_LABELS[card.service] ?? card.service}</dd>
         </div>
+        {card.old_slot_label && (
+          <div>
+            <dt>Now</dt>
+            <dd>{card.old_slot_label}</dd>
+          </div>
+        )}
         <div>
-          <dt>When</dt>
+          <dt>{card.old_slot_label ? "Move to" : "When"}</dt>
           <dd>{card.slot_label}</dd>
         </div>
         <div>

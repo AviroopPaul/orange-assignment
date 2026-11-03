@@ -105,6 +105,16 @@ class ProposeBookingArgs(_Strict):
     slot: str = Field(min_length=1, max_length=40)
 
 
+class ProposeCancelArgs(_Strict):
+    booking_id: str = Field(min_length=1, max_length=40)
+
+
+class ProposeRescheduleArgs(_Strict):
+    booking_id: str = Field(min_length=1, max_length=40)
+    day: str = Field(min_length=1, max_length=100)
+    time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
 class ResolveDatesArgs(_Strict):
     phrase: str = Field(min_length=1, max_length=100)
 

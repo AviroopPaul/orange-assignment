@@ -273,7 +273,7 @@ describe("chat", () => {
     fakeApi(STATUS_OK);
     render(<App />);
     expect(
-      screen.getByText(/Cancelling, rescheduling and memory are not connected yet/),
+      screen.getByText(/Memory is not connected yet/),
     ).toBeInTheDocument();
   });
 
@@ -552,6 +552,46 @@ describe("approval card", () => {
     expect(within(card).getByText("Thu 05/11/2026, 09:00")).toBeInTheDocument();
     expect(within(card).getByText("₹1,200")).toBeInTheDocument();
     expect(within(card).getByText(/higher than the search price/)).toBeInTheDocument();
+  });
+
+  it("says plainly when a card is about cancelling", async () => {
+    fakeApi({
+      ...withCard,
+      "POST /api/chat": reply("run-1", "It is not cancelled yet.", {
+        outcome: "awaiting_approval",
+        approval: { ...CARD, action: "cancel", notes: [] },
+      }),
+    });
+    render(<App />);
+    await say("cancel my booking");
+
+    const card = await screen.findByRole("region", { name: "Cancel this booking?" });
+    expect(within(card).getByText("Thu 05/11/2026, 09:00")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Confirm" })).toBeInTheDocument();
+  });
+
+  it("shows both times when a card is about moving a booking", async () => {
+    fakeApi({
+      ...withCard,
+      "POST /api/chat": reply("run-1", "It has not moved yet.", {
+        outcome: "awaiting_approval",
+        approval: {
+          ...CARD,
+          action: "reschedule",
+          old_slot_label: "Tue 03/11/2026, 10:00",
+          notes: ["This new time is not held."],
+        },
+      }),
+    });
+    render(<App />);
+    await say("move it");
+
+    const card = await screen.findByRole("region", { name: "Move this booking?" });
+    expect(within(card).getByText("Now")).toBeInTheDocument();
+    expect(within(card).getByText("Tue 03/11/2026, 10:00")).toBeInTheDocument();
+    expect(within(card).getByText("Move to")).toBeInTheDocument();
+    expect(within(card).getByText("Thu 05/11/2026, 09:00")).toBeInTheDocument();
+    expect(within(card).getByText("This new time is not held.")).toBeInTheDocument();
   });
 
   it("confirms with a click, closes the card and reports progress honestly", async () => {

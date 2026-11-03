@@ -167,6 +167,8 @@ def test_model_can_only_reach_read_tools() -> None:
         "update_request",
         "resolve_dates",
         "propose_booking",
+        "propose_cancel",
+        "propose_reschedule",
         "search_providers",
         "get_provider",
         "list_bookings",

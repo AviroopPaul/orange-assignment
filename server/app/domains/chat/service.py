@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # True for this message alone. A booking already running is reported instead, in `_failure_reply`.
 NO_CHANGE = "This message did not make or change any booking."
-BOOKING_RUNNING = "Your earlier booking is still in progress, and it is not confirmed yet."
+BOOKING_RUNNING = "Your earlier booking request is still in progress, and it is not confirmed yet."
 CARD_REMINDER = "Please check the details on the card and confirm, or tell me what to change."
 _FIELD_NAMES = {
     "service": "the service you need",

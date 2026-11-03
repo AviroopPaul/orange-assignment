@@ -56,10 +56,11 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
 - **Every tool call goes through `ToolGateway.call`.** Only `gateway/client.py` talks to the provider. `book`, `cancel` and `reschedule` need `Caller.SAGA` and a valid approval. The model never gets them as tools.
 - **The model never chooses search inputs.** It saves details with `update_request`, and code checks them against the user's words. `search_providers` takes no inputs.
 - **The model never works out a date.** `resolve_dates` reads the user's own words and saves the dates with no question. The next reply must show the exact dates: `ChatService` adds them if the model left them out. Bookings are approved on the card, not here.
-- **A yes comes only from the raw message or a click.** `decide_from_message` reads it before the model runs. The model can call `propose_booking`, which only takes a hold and shows a card.
+- **A yes comes only from the raw message or a click.** `decide_from_message` reads it before the model runs. The model can call `propose_booking`, `propose_cancel` and `propose_reschedule`, which only show a card.
 - **A card comes from the approval row only.** Never put model text or provider reviews on it.
 - **`book` needs a token built from what the saga sees now.** `token_for` hashes the approved facts with the current list price, and the verifier refuses any difference. A refused call was never sent.
-- **Only `get_booking_status` can report success.** It runs after every `book`, whatever `book` returned. Success text is a template, written in the same transaction that closes the attempt.
+- **Only the source of truth can report success.** `get_booking_status` runs after every `book`, and `list_bookings` after every `cancel` or `reschedule`, whatever the call returned. Success text is a template, written in the same transaction that closes the attempt.
+- **A word on a card counts only for that card's action.** `read_decision` takes the action, so "book it" cannot approve a cancel. Pass the action whenever a card is open.
 - **Read again after taking a row lock.** A row read before the wait can be out of date, and SQLite tests will not show it. See `BUGS.md`.
 - **The saga commits before each call,** so a job that dies or repeats continues from what is known. Open attempts come back through `BookingSaga.recover`, which the sweep runs.
 - **Only code moves workflow state**, through `WorkflowService`. Add a move to `TRANSITIONS` before using it.

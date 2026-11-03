@@ -9,7 +9,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.database import Database
-from app.domains.bookings.models import Approval, ApprovalStatus, AttemptStatus
+from app.domains.bookings.models import (
+    Approval,
+    ApprovalStatus,
+    AttemptStatus,
+    BookingAction,
+    BookingAttempt,
+)
 from app.domains.bookings.repository import BookingRepository
 
 logger = logging.getLogger(__name__)
@@ -27,8 +33,10 @@ class ApprovedFacts:
     price: int
     list_price: int
     currency: str
-    hold_id: str
+    hold_id: str | None
     expires_at: str
+    booking_id: str | None = None
+    old_slot: str | None = None
 
     def hash(self) -> str:
         canonical = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
@@ -51,6 +59,8 @@ def facts_of(approval: Approval) -> ApprovedFacts:
         currency=approval.currency,
         hold_id=approval.hold_id,
         expires_at=expiry_text(approval.expires_at),
+        booking_id=approval.booking_id,
+        old_slot=approval.old_slot,
     )
 
 
@@ -62,6 +72,30 @@ def token_for(approval: Approval, current_list_price: int) -> str:
     """Hash what the saga sees right now. A price that moved gives a token the gateway refuses."""
     current = replace(facts_of(approval), list_price=current_list_price)
     return f"{approval.id}:{current.hash()}"
+
+
+def change_token_for(approval: Approval, booking: dict[str, Any]) -> str:
+    """Hash the booking as the provider shows it now. If it moved or its price changed, the
+    gateway refuses, because the user agreed to change the booking they saw."""
+    current = replace(
+        facts_of(approval), provider_id=str(booking["provider_id"]), price=int(booking["price"])
+    )
+    if approval.action == BookingAction.CANCEL:
+        current = replace(current, slot=str(booking["slot"]))
+    else:
+        current = replace(current, old_slot=str(booking["slot"]))
+    return f"{approval.id}:{current.hash()}"
+
+
+def _is_the_approved_call(
+    tool: str, args: dict[str, Any], approval: Approval, attempt: BookingAttempt
+) -> bool:
+    if tool == BookingAction.BOOK:
+        return args.get("hold_id") == approval.hold_id == attempt.hold_id
+    same_booking = args.get("booking_id") == approval.booking_id == attempt.booking_id
+    if tool == BookingAction.RESCHEDULE:
+        return same_booking and args.get("slot") == approval.slot == attempt.slot
+    return same_booking
 
 
 class BookingApprovalVerifier:
@@ -92,7 +126,7 @@ class BookingApprovalVerifier:
             "consumed": approval.status == ApprovalStatus.CONSUMED.value,
             "user": approval.user_id == user_id == attempt.user_id,
             "action": approval.action == tool,
-            "hold": args.get("hold_id") == approval.hold_id == attempt.hold_id,
+            "call": _is_the_approved_call(tool, args, approval, attempt),
             "key": args.get("idempotency_key")
             == attempt.idempotency_key
             == idempotency_key(tool, parsed_id),

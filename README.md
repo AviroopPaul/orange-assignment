@@ -76,3 +76,5 @@ docker-compose run --rm --no-deps --user root -v "$PWD/server/alembic:/srv/alemb
 ```
 
 `make test-integration` fails if models and migrations disagree.
+
+GitHub CI (`.github/workflows/ci.yml`) runs the same checks and the integration tests on every pull request and on pushes to `main`.

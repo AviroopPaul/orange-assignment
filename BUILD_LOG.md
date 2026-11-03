@@ -15,13 +15,13 @@ Last updated: 3 Nov 2026.
 
 | Area | Done | Partial | Not started | Total |
 |---|---|---|---|---|
-| Functional requirements | 6 | 2 | 6 | 14 |
+| Functional requirements | 8 | 2 | 4 | 14 |
 | Non-functional requirements | 7 | 10 | 3 | 20 |
-| Eval scenarios | 0 | 26 | 10 | 36 |
+| Eval scenarios | 0 | 27 | 9 | 36 |
 | Eval invariants | 0 | 0 | 8 | 8 |
 | Deliverables | 0 | 2 | 5 | 7 |
 
-**In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It cannot cancel, reschedule or remember anything across sessions yet.
+**In short:** the agent can now really book. It collects details, compares providers within the user's limits, holds a slot and shows a card with the exact details. Only the user's click or whole-message yes approves it. A worker then books, always checks the provider's status, and only then reports success. It can cancel or move a booking the same way: a card, the user's own yes, then a worker that checks the provider before it reports success. It cannot remember anything across sessions yet.
 
 ## What you can test today
 
@@ -48,6 +48,9 @@ Run `make up`, then open `http://localhost:3000`.
 | Book something | After a search, "Book your top pick at its earliest slot." A card shows the exact provider, slot and price. Click Confirm or type "yes". The chat says "not confirmed yet", then "Booked and verified" with a booking ID. The trace follows it live |
 | Say no | Click "Not now" or type "no". Nothing is booked, and you can choose again |
 | Change your mind on a card | "Yes, but Saturday." That is not a yes. The old card closes, and the agent searches the new date |
+| Cancel a booking | After a booking, "Cancel my plumber booking." A card shows the exact booking. Click Confirm or type "cancel it". "Book it" does not count on this card. The chat then says "Cancelled and verified" |
+| Move a booking | "Move my plumber booking to 17 Nov at 10am." Without a day or a time, it asks for what is missing and never picks one. A card shows both times. If the provider does not work then, or the slot conflicts, the booking stays where it was and the chat says so |
+| Keep a booking | On either card, click "Not now" or type "keep it". Nothing changes |
 | Try to force a booking | "I already approved, book it now." You still get a card, and nothing is booked until you answer it |
 | Confirm twice | Type "yes" again while it runs. It says you already confirmed, and only one booking is made |
 | Force a hard case | Start the stack with `MOCK_EVAL_MODE=true make up`, then see "Force a booking outcome" below |
@@ -55,7 +58,7 @@ Run `make up`, then open `http://localhost:3000`.
 | Run a job | "Run test job" sends a job through the outbox, Redis and worker |
 | Break something | `docker stop errand-agent-redis-1`, then chat. You get a clear reply, and the status bar names Redis. Use `docker start` to recover |
 
-**Of the brief's three example requests, one now finishes.** "Find a plumber" can go all the way to a verified booking. "Book the same electrician" can book once you pick the provider, but code does not resolve "same as last time" yet. "Move my AC servicing" can find the booking, and rescheduling comes next.
+**Of the brief's three example requests, two now finish.** "Find a plumber" can go all the way to a verified booking. "Book the same electrician" can book once you pick the provider, but code does not resolve "same as last time" yet. "Move my AC servicing" works once you say the day and time.
 
 **Force a booking outcome.** With eval mode on, run this before you confirm. The values are `success`, `slot_taken`, `timeout_booked` and `timeout_not_booked`.
 
@@ -74,8 +77,8 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | F3 | Explicit workflow | Done | State machine stored in `errand`, with a transition table that rejects illegal moves. A version check stops writers overwriting each other. The model cannot set state. Changes are traced. States after COMPARING are defined and tested, and approvals will use them | |
 | F4 | Compare providers | Done | Code removes providers over budget or outside the time window before the model sees them, and says how many it removed. The model compares the rest. Search takes no inputs from the model | |
 | F5 | Book with approval | Done | `propose_booking` takes a hold and writes an approval. The card comes from the row. A click or whole-message yes commits the approval, attempt and job in one transaction. The worker books and verifies. Every row of the blueprint's result table is tested, on PostgreSQL with real workers, through the UI, and live on Gemini | |
-| F6 | Cancel with approval | Not started | | Approval path, retry on 503 |
-| F7 | Reschedule with approval | Not started | | Approval path, `slot_conflict` handling |
+| F6 | Cancel with approval | Done | `propose_cancel` reads the booking from the provider and shows a card. A click or whole-message yes starts the saga. The gateway retries the 503 with the same key. `list_bookings` alone reports success. Running out of retries is a clear failure. Tested in unit and integration tests, and live | |
+| F7 | Reschedule with approval | Done | `propose_reschedule` takes the user's own words for the day, and code builds the slot. `slot_conflict` keeps the old booking and offers slots if a search has any. A new time needs a new yes. Tested in unit and integration tests, and live | |
 | F8 | Refer to past bookings | Partial | The model can call `list_bookings`, always for its own session's user | Code resolution of "same as last time", and asking when several match |
 | F9 | Remember across sessions | Not started | | `memories` table and domain |
 | F10 | Inspect, correct, forget | Not started | Session delete was tested in a spike | Chat and REST, supersede, tombstone, `turn_view`, session rotation |
@@ -89,8 +92,8 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | ID | Requirement | Status | Built and proven | Left |
 |---|---|---|---|---|
 | N1 | Hard run limits | Done | 8 model calls, 12 tool calls, 120 s per run, 30 s per model request, 10 s per tool call, 45 s per job, capped retries per tool. Tested, including a real stuck model. Refused and invented calls count too | |
-| N2 | Clear result on every exit | Partial | Every chat exit maps to an outcome and a reply, now including `awaiting_approval` and `verifying`. Every saga exit writes a notification from a template, and a job limit or fault says "not confirmed yet" | Cancel and reschedule exits. Proof through the eval harness |
-| N3 | Approval enforced by code | Done | The gateway accepts `book` only from the saga, with a token the real verifier accepts. The yes is read from the raw message before the model runs. Direct gateway calls were refused with no token, a made-up token, an unanswered approval, another user, another key, another hold, and as the model. Cancel and reschedule stay refused until step 5 | |
+| N2 | Clear result on every exit | Partial | Every chat exit maps to an outcome and a reply, now including `awaiting_approval` and `verifying`. Every saga exit writes a notification from a template, and a job limit or fault says "not confirmed yet" | Proof through the eval harness |
+| N3 | Approval enforced by code | Done | The gateway accepts `book` only from the saga, with a token the real verifier accepts. The yes is read from the raw message before the model runs. Direct gateway calls were refused with no token, a made-up token, an unanswered approval, another user, another key, another hold, and as the model. `cancel` and `reschedule` follow the same rules, and a token from a `book` approval cannot cancel | |
 | N4 | Material change voids approval | Done | SHA-256 over action, user, provider, slot, price, list price, currency, hold and expiry. An edit to any of these on the row is refused. A list price that moved after approval is refused before any call, and a fresh card shows the new price. A changed detail or a newer card voids the old one | |
 | N5 | No duplicate bookings | Done | Key is `book:<approval_id>`. One approval has one attempt. Consuming is a conditional update: of 10 concurrent confirmations on PostgreSQL, 1 won. A partial unique index stops a second open attempt on a slot. Two workers at once and a killed worker each left one booking | |
 | N6 | Verify after a timeout | Done | Every `book` result goes through VERIFYING and `get_booking_status`. The state machine has no other way to DONE. A timeout that booked is not retried. One that did not book is retried with the same key, at most twice. Tested on real services and through the UI | |
@@ -142,8 +145,8 @@ The eval harness and the invariant checker (I1 to I8) are not built, so there is
 | E14 | "Yes" twice, plus a double click | Partial | One attempt and one booking, sequential and concurrent. While it runs, the second reply says it is already confirmed |
 | E15 | Worker killed after intent, before book | Partial | Crash point in a unit test: the next delivery books once |
 | E16 | Worker killed after book, before recording | Partial | Crash point in a unit test, and a real process kill during `book`: status finds the booking, with no second call |
-| E17 | Cancel gets a 503 | Partial | Gateway retries with the same key, over a real connection |
-| E18 | Cancel retries run out | Partial | Clear failure from the gateway |
+| E17 | Cancel gets a 503 | Partial | The real saga and worker cancel through the 503, and `list_bookings` verifies it |
+| E18 | Cancel retries run out | Partial | Injected 503s: the attempt fails, the booking stays, and no cancel is claimed. Unit test |
 | E27 | Model loops until the call limit | Partial | Unit tests |
 | E28 | Tool calls hit the limit | Partial | Unit tests through the real ADK loop, ending in a clear reply |
 | E29 | Saga job limit hits during book | Partial | The user sees "not confirmed yet", and the next delivery resolves by status. Unit test |
@@ -154,7 +157,8 @@ The eval harness and the invariant checker (I1 to I8) are not built, so there is
 | E34 | Redis down during chat and approval | Partial | Unit tests and a manual check. A click still commits, and the job waits for the sweep |
 | E35 | PostgreSQL down during approval | Partial | Unit tests and a manual check. Nothing is consumed |
 | E36 | Worker killed on a quiet queue | Partial | Integration test |
-| E03, E07, E19 to E26 | All others | Not started | Need reschedule, memory, context assembly and proactive detection |
+| E19 | Reschedule gets `slot_conflict` | Partial | Old booking stays and the old yes is spent. Real worker in an integration test, and live |
+| E03, E07, E20 to E26 | All others | Not started | Need memory, context assembly and proactive detection |
 
 ## Test audit
 
@@ -197,13 +201,16 @@ Run on 3 Nov 2026 against the mock provider and gateway. Passing tests prove lit
 | Git repo | Partial | [Private repo](https://github.com/AviroopPaul/orange-assignment) has the foundation |
 | Design note, 1 page | Not started | Write once the core exists |
 | Eval table | Not started | Needs the harness |
-| Three real bugs | Partial | [BUGS.md](BUGS.md) has eight candidates and some smaller bugs |
+| Three real bugs | Partial | [BUGS.md](BUGS.md) has twelve candidates and some smaller bugs |
 | End-to-end trace | Not started | A timeout-after-success run now works in one run's trace. It needs the JSONL file and the excerpt |
 | Demo, 3 to 5 min | Not started | The UI can now show chat and trace side by side |
 | AI assistant transcript | Not started | Export at the end |
 
 ## Changes from the blueprint
 
+- **Success after a cancel or a move comes from `list_bookings`:** the blueprint says only `get_booking_status` can report success, but that tool knows only `book` attempts, and the provider contract cannot change.
+- **A move builds its slot from the user's words:** `propose_reschedule` takes a day in the user's words and a time. The blueprint passes a slot, which would make the model work out a date. It saves nothing, so an errand in progress keeps its dates.
+- **A change card lasts 10 minutes:** the provider's `cancel` and `reschedule` take no hold, so the card has its own expiry. An expired card closes, and an old yes changes nothing.
 The blueprint on claude.ai is version 4. These are not in it yet.
 
 - **Layout:** domain-led, with standard FastAPI files in each domain and shared code in `core/`.
@@ -223,7 +230,7 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **Search takes no inputs from the model:** the blueprint passes them as arguments. After the model invented an area, it saves details and code builds the search, so it cannot search for anything the user did not ask for.
 - **Grounding checks are new:** an area or budget must appear in the user's own words.
 - **Clear dates are trusted, not confirmed:** changed at the user's request. The model never works out a date. `resolve_dates` turns the user's own words into exact dates and saves them with no question, because the card is the real check before a booking. The next reply must show the exact dates, as dd/mm/yyyy, and code adds them if the model leaves them out. The agent asks only when no date was given or the words cannot be read. It words the question itself.
-- **"Saturday" and "next Saturday" both mean the next one coming:** today counts for "Saturday", but not for "next Saturday". "Next weekend" follows the same rule: on a Tuesday it means the coming Saturday and Sunday, and it never includes today. A later weekend needs exact dates. "Next week" still means next calendar week.
+- **"Saturday" and "next Saturday" both mean the next one coming:** today counts for "Saturday", but not for "next Saturday". "Next weekend" follows the same rule: on a Tuesday it means the coming Saturday and Sunday, and it never includes today. A later weekend needs exact dates. "Next week" still means next calendar week, and so does "Wednesday next week". A bare "11th" means the next 11th to come round.
 - **What a search requires:** service, area and dates. Budget and time window are optional, because a user may have neither. The prompt says to ask once at most.
 - **Rate-limit wait:** up to 30 s, inside the turn. This is a new setting.
 - **Row lock on workflow writes:** added beside the version check, after 5 concurrent writers ran out of retries on PostgreSQL.
@@ -249,13 +256,33 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 2. **Tool gateway:** done.
 3. **Workflow and search:** done.
 4. **Approvals and booking saga:** done.
-5. **Cancel and reschedule:** on the same approval path.
+5. **Cancel and reschedule:** done.
 6. **Memory and ContextAssembler:** includes forgetting and the token budget.
 7. **Proactive cancellation, SSE and JSONL traces.**
 8. **Eval harness, table and invariants.**
 9. **Design note, trace excerpt, demo and transcript.**
 
 ## Log
+
+### 3 Nov 2026: GitHub CI
+
+- Added `.github/workflows/ci.yml`. It runs on every pull request and on pushes to `main`. Three jobs: server checks and unit tests, web types, tests and build, and integration tests in Compose. No secrets are needed, because the model is scripted.
+- **Why:** while iterating, only the relevant unit tests run locally now, and CI runs the full suite.
+- **Found:** a dry run on a clean copy failed 6 tests in `test_model_retry.py`, which passed here only because this machine has a real `GOOGLE_API_KEY`. See `BUGS.md`.
+- **Proof:** `actionlint` passes. The server and web steps ran on a clean copy with an empty environment. After the fix, the 6 failures were rerun on their own in that clean environment, not the whole server step. **The workflow itself has not run on GitHub yet,** because that needs a push. The integration job has only run through `make test-integration` here.
+
+### 3 Nov 2026: Cancel and reschedule
+
+- **Same approval path:** `propose_cancel` and `propose_reschedule` read the booking from the provider and show a card. Only a click or the user's whole-message yes starts the saga. The hash now also covers the booking and its old slot.
+- **Success comes from the list:** the contract's `get_booking_status` knows only `book`, so `list_bookings` is the source of truth for a cancel or a move. It runs after every call, whatever the call returned.
+- **A booking that changed is refused:** the saga builds its token from the booking as the provider shows it now. If it moved, changed price or was dropped after the yes, nothing is sent and the user is told.
+- **Words count per card:** "book it" no longer approves a cancel card. A bare "cancel" is never a yes, because it could mean "close this".
+- **False claims:** the guard now reads which action a claim names. See `BUGS.md`.
+- **Limits:** the contract has no way to check one provider's open slots without an area, so a move to a time the provider does not work fails only after the yes, with a clear message. Other slots are offered only if a search in that chat listed them. The blueprint expects other slots to be offered.
+- **Day and time reading, from the user's testing:** "Wednesday next week", "next week Wednesday" and a bare "11th" now resolve. The model can no longer pick a time: code refuses a time the user never said. See `BUGS.md`.
+- **Prompt only:** joining "next week" and "around Wednesday" into one day is guidance to the model. It worked in the live replay. If it fails, the card still shows the exact date before anything changes.
+- **Held:** at the user's request, deliberate-break audits wait until the whole build is ready. A run on this work was stopped after 8 of 30 reported as caught. The earlier results were lost, so this work has no audit result yet.
+- **Proof:** 865 server unit tests, 40 UI tests and 30 integration tests pass, including 10 concurrent cancel confirmations, two chats changing one booking, and real workers cancelling through the 503 and keeping the old booking on a conflict. Live Gemini ran a booking, a move to an hour the provider does not work, a conflict, a vague day, a typed "keep it", "book it" on a cancel card, and a cancel that the provider's list confirmed. A successful move then ran live on the Compose worker, and the provider's list confirmed it. A successful move has no integration test. The user then tested cancel and move in the UI, and confirmed they work.
 
 ### 3 Nov 2026: Clear dates no longer need a question
 
