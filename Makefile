@@ -38,7 +38,8 @@ test-integration:
 # Every scenario, offline, on its own throwaway PostgreSQL and Redis. Writes evals/results.*.
 evals:
 	mkdir -p evals
-	chmod a+rwx evals
+	# The container's user must be able to replace the committed results.
+	chmod -R a+rwX evals
 	$(COMPOSE) --profile evals rm -fsv postgres-eval redis-eval
 	$(COMPOSE) --profile evals build evals
 	$(COMPOSE) --profile evals run --rm evals; status=$$?; \

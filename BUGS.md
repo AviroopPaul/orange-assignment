@@ -139,6 +139,8 @@ Candidates for the "three real bugs" deliverable. Each one really happened, and 
 
 ## Smaller
 
+**The eval job failed in CI after every scenario had passed.** All 38 scenarios passed on GitHub's runner, and then writing the table failed with `PermissionError`. Once `evals/results.*` were committed, a fresh checkout owned them as the runner's user, and the container runs as another user. Only the folder was made writable, not the files. This never showed on a Mac, where Docker maps file ownership. `make evals` now makes the files writable too. Regression test: the Evals job in CI.
+
 **The false-claim guard's own reply read as a claim.** I3 flagged it in E05. "I only say something is booked" matches the pattern for a claim, and the words "once it is verified" come after it, so they did not count. Nothing reached a user wrongly, but the reply was the one thing that should never look like a claim. It now says "I only report a booking or a change". Regression test: E05 with I3.
 
 **The event stream said "no news" as soon as it opened.** Redis answers a subscribe with a message, and the client reports that as nothing. So the first wait ended at once. Users would have seen no difference, because it only sent a keepalive early, but the listener's answer was wrong. Regression test: `test_a_wake_up_delivers_at_once_over_real_redis` in `server/tests/integration/test_proactive.py`.

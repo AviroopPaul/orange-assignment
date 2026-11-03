@@ -342,6 +342,11 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 
 ## Log
 
+### 4 Nov 2026: Eval job in CI
+
+- **Found:** the Evals job failed on PR 11, PR 12 and `main`. All 38 scenarios passed on GitHub's runner, and only writing the results files failed. PR 11 was merged before this job finished.
+- **Fix:** `make evals` now makes the committed results files writable. The CI run on PR 12 is the proof.
+
 ### 3 Nov 2026: Design note and trace
 
 - **Design note:** one A4 page, checked by rendering it. The trace excerpt comes from a real E11 run.
