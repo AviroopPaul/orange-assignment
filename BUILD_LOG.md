@@ -265,7 +265,7 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **The provider that cancelled is not offered again:** the brief does not say. It seemed wrong to offer it back at once. The user can still ask for it, and a new search will find it.
 - **A blank errand can close:** `INTAKE` to `DONE` is a new legal move. "Thanks" after a booking opens a blank errand, which would otherwise block reopening the old one under the one-active-errand index.
 - **Added `run_started`:** the JSONL file has this one extra line first, with the user and session. The database has no matching event.
-- **Model is `gemini-2.5-flash`:** the blueprint names `gemini-3.5-flash-lite`, which took 1 s to 20 s on a tiny prompt. `gemini-3.6-flash` took 7 s to 13 s, and `gemini-3.8-flash` returned 503 on all 3 tries. In a test of small tool calls, `gemini-2.5-flash` took about 1.5 s with 4 of 4 correct. Spikes still happen on it. `MODEL_NAME` changes it.
+- **Model is `gemini-3-flash-preview`:** the blueprint names `gemini-3.5-flash-lite`, which took 1 s to 20 s on a tiny prompt. `gemini-3.6-flash` took 7 s to 13 s, and `gemini-3.8-flash` returned 503 on all 3 tries. `gemini-2.5-flash` allows only 20 requests a day on the free tier, which is about 10 turns. `gemini-3-flash-preview` took about 1.3 s in small tool calls, with 4 of 4 correct. Its daily limit is not known. `MODEL_NAME` changes it.
 - **A proposal must come from the last search:** `propose_booking` refuses a provider or slot outside the stored shortlist. So the budget and time limits hold at the proposal, not only in what the model was shown.
 - **What "current data" means for the hash:** the brief has no tool that reads a hold's quote again. So the saga reads the provider's list price with `get_provider` before each `book`, and hashes that with the approved facts. The price also covers the hold's quote through the row hash.
 - **Eval control `provider_prices`:** a new scenario field on the mock, so a price can move after approval. The tool contract does not change.
@@ -312,6 +312,14 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 9. **Design note, trace excerpt, demo and transcript.**
 
 ## Log
+
+### 3 Nov 2026: Model is now `gemini-3-flash-preview`
+
+- **Why:** `gemini-2.5-flash` returned 429 with `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, value 20. That is about 10 turns a day. The limit is per model, so other models still answered.
+- **Change:** it is the default in `config.py`, `compose.yaml` and `.env.example`, with a price in `pricing.py` ($0.50 in, $3.00 out per million, from Google's page). Images are rebuilt.
+- **Proof:** api and worker report the model. One real turn took 3.5 s, with one model call of 2.5 s and a cost in the trace.
+- **Decision:** the user tried it in the UI and kept it. `MODEL_NAME` still changes it.
+- **Not tested:** a timed run over many calls. Its daily limit is not known.
 
 ### 3 Nov 2026: UI redesign
 

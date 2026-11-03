@@ -12,7 +12,7 @@ x-server: &server
     REDIS_URL: redis://redis:6379/0
     MOCK_PROVIDER_URL: http://mock-provider:8100
     GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-    MODEL_NAME: ${MODEL_NAME:-gemini-2.5-flash}
+    MODEL_NAME: ${MODEL_NAME:-gemini-3-flash-preview}
     MODEL_MODE: ${MODEL_MODE:-live}
 
 services:

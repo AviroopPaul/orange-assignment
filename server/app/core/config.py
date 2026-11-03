@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     google_api_key: SecretStr | None = None
     model_mode: Literal["live", "scripted"] = "live"
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3-flash-preview"
     model_request_timeout_s: float = 30
     model_attempts: int = 2
     model_rate_limit_max_wait_s: float = 30
