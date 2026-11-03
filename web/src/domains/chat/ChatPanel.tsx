@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
-import type { ChatMessage, Outcome } from "./types";
+import { ApprovalCardView } from "./ApprovalCardView";
+import type { ApprovalCard, ChatMessage, Outcome } from "./types";
 
 const MAX_LENGTH = 4000;
 
@@ -28,6 +29,7 @@ interface ChatPanelProps {
   sessionId: string | null;
   selectedRunId: string | null;
   onSend: (text: string) => Promise<{ sent: boolean }>;
+  onAnswer: (card: ApprovalCard, choice: "confirm" | "reject") => void;
   onNewChat: () => void;
   onSelectRun: (runId: string) => void;
 }
@@ -38,6 +40,7 @@ export function ChatPanel({
   sessionId,
   selectedRunId,
   onSend,
+  onAnswer,
   onNewChat,
   onSelectRun,
 }: ChatPanelProps) {
@@ -91,8 +94,8 @@ export function ChatPanel({
           <div className="empty">
             <p className="empty-title">Tell the agent what you need done at home.</p>
             <p className="notice">
-              The agent can search and compare providers and show your bookings. Holding, booking
-              and memory are not connected yet, so it will tell you it can't complete a booking.
+              The agent can search and compare providers, show your bookings and book a slot once
+              you confirm it. Cancelling, rescheduling and memory are not connected yet.
             </p>
             <p className="examples-label">Try one of these</p>
             <div className="examples">
@@ -113,6 +116,14 @@ export function ChatPanel({
         {messages.map((message) => (
           <article key={message.id} className={`message ${message.role}`}>
             <p>{message.text}</p>
+            {message.approval && (
+              <ApprovalCardView
+                card={message.approval}
+                open={message.approvalOpen === true}
+                busy={sending}
+                onAnswer={onAnswer}
+              />
+            )}
             {message.role === "agent" && message.runId && (
               <button
                 type="button"

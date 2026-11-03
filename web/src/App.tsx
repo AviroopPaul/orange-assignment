@@ -29,6 +29,7 @@ export function App() {
           sessionId={chat.sessionId}
           selectedRunId={shownRunId}
           onSend={chat.send}
+          onAnswer={(card, choice) => void chat.answer(card, choice)}
           onNewChat={onNewChat}
           onSelectRun={setSelectedRunId}
         />

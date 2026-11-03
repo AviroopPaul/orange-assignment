@@ -240,3 +240,24 @@ async def test_job_that_keeps_killing_workers_is_given_up(
 
 async def test_unknown_id_is_skipped(service: JobService) -> None:
     assert await service.execute(uuid.uuid4()) == ExecutionResult.SKIPPED
+
+
+async def test_a_failing_sweeper_does_not_stop_jobs_being_sent(
+    service: JobService, publisher: RecordingPublisher, db: Database
+) -> None:
+    called = []
+
+    async def broken() -> None:
+        raise RuntimeError("another domain has a problem")
+
+    async def working() -> None:
+        called.append(True)
+
+    service.add_sweeper(broken)
+    service.add_sweeper(working)
+    async with db.session_scope() as session:
+        await service.enqueue_in(session, "record", {})
+
+    assert await service.sweep() == 1
+    assert called == [True]
+    assert len(publisher.published) == 1

@@ -11,6 +11,7 @@ from app.domains.agent.llm import build_model, build_request_config
 from app.domains.agent.prompts import SYSTEM_PROMPT
 from app.domains.agent.runtime import APP_NAME, AdkAgentRuntime
 from app.domains.agent.scripted import ScriptedLlm, ToolCall
+from app.domains.bookings.service import ApprovalService
 from app.domains.chat.ports import ModelCallLimitExceeded, ModelUnavailable, SessionConflict
 from app.domains.gateway.service import ToolGateway
 from app.domains.tracing.service import RunRecorder, TraceService
@@ -29,7 +30,9 @@ async def recorder(traces: TraceService) -> RunRecorder:
 
 
 @pytest.fixture
-def runtime_with(gateway: ToolGateway, workflow: WorkflowService, clock: FakeClock):
+def runtime_with(
+    bookings: ApprovalService, gateway: ToolGateway, workflow: WorkflowService, clock: FakeClock
+):
     def build(
         script: list, sessions: InMemorySessionService | None = None, max_calls: int = 8
     ) -> tuple[AdkAgentRuntime, ScriptedLlm, InMemorySessionService]:
@@ -40,6 +43,7 @@ def runtime_with(gateway: ToolGateway, workflow: WorkflowService, clock: FakeClo
             sessions,
             gateway,
             workflow,
+            bookings,
             max_model_calls=max_calls,
             max_tool_calls=12,
             today=lambda: clock.now().date(),

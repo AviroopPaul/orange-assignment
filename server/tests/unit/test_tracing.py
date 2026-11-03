@@ -58,3 +58,32 @@ async def test_trace_write_failure_does_not_reach_the_caller(
     with patch.object(db, "session_scope", side_effect=error):
         await recorder.event("model_error")
         await traces.finish_run(recorder, "tool_failed", "model_unavailable", "Sorry.")
+
+
+async def test_two_writers_on_one_run_keep_every_event(db: Database, clock: FakeClock) -> None:
+    """The saga continues a run's trace, maybe while the turn that started it still finishes."""
+    traces = TraceService(db, clock)
+    first = await traces.start_run("u1", "s1")
+    await first.event("one")
+    second = await traces.resume_run(first.run_id)
+    await second.event("two")
+    await first.event("three")
+    await second.event("four")
+
+    trace = await traces.get_trace(first.run_id)
+    assert sorted(event.kind for event in trace.events) == ["four", "one", "three", "two"]
+    assert len({event.seq for event in trace.events}) == 4
+
+
+async def test_settling_a_run_keeps_its_model_counts(db: Database, clock: FakeClock) -> None:
+    traces = TraceService(db, clock)
+    recorder = await traces.start_run("u1", "s1")
+    await recorder.model_call("gemini-3.5-flash-lite", ModelUsage(10, 100, 20), {})
+    await traces.finish_run(recorder, "verifying", None, "in progress")
+
+    resumed = await traces.resume_run(recorder.run_id)
+    await traces.settle_run(resumed, "done", "booked")
+
+    trace = await traces.get_trace(recorder.run_id)
+    assert (trace.outcome, trace.reply) == ("done", "booked")
+    assert trace.input_tokens == 100

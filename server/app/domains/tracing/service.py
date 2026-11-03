@@ -4,7 +4,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.core.clock import Clock
 from app.core.database import Database
@@ -14,6 +14,8 @@ from app.domains.tracing.repository import TraceRepository
 from app.domains.tracing.schemas import RunTraceRead, TraceEventRead
 
 logger = logging.getLogger(__name__)
+
+SEQ_ATTEMPTS = 5
 
 
 class RunNotFound(Exception):
@@ -30,11 +32,11 @@ class ModelUsage:
 class RunRecorder:
     """Writes one run's events, each in its own short transaction."""
 
-    def __init__(self, db: Database, clock: Clock, run_id: uuid.UUID) -> None:
+    def __init__(self, db: Database, clock: Clock, run_id: uuid.UUID, seq: int = 0) -> None:
         self._db = db
         self._clock = clock
         self.run_id = run_id
-        self._seq = 0
+        self._seq = seq
         self.model_calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -50,24 +52,35 @@ class RunRecorder:
         output_tokens: int | None = None,
         estimated_cost_usd: float | None = None,
     ) -> None:
-        self._seq += 1
-        event = TraceEvent(
-            run_id=self.run_id,
-            seq=self._seq,
-            kind=kind,
-            name=name,
-            data=data or {},
-            latency_ms=latency_ms,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            estimated_cost_usd=estimated_cost_usd,
-            created_at=self._clock.now(),
-        )
-        try:
-            async with self._db.session_scope() as session:
-                await TraceRepository(session).add_event(event)
-        except (SQLAlchemyError, OSError):
-            logger.exception("could not write trace event %s for run %s", kind, self.run_id)
+        # The saga writes to the run that took the user's yes, maybe while that run still finishes.
+        for _ in range(SEQ_ATTEMPTS):
+            self._seq += 1
+            event = TraceEvent(
+                run_id=self.run_id,
+                seq=self._seq,
+                kind=kind,
+                name=name,
+                data=data or {},
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                estimated_cost_usd=estimated_cost_usd,
+                created_at=self._clock.now(),
+            )
+            try:
+                async with self._db.session_scope() as session:
+                    await TraceRepository(session).add_event(event)
+                return
+            except IntegrityError:
+                self._seq = await self._last_seq()
+            except (SQLAlchemyError, OSError):
+                logger.exception("could not write trace event %s for run %s", kind, self.run_id)
+                return
+        logger.error("gave up on trace event %s for run %s", kind, self.run_id)
+
+    async def _last_seq(self) -> int:
+        async with self._db.session_scope() as session:
+            return await TraceRepository(session).last_seq(self.run_id)
 
     async def model_call(self, model: str, usage: ModelUsage, data: dict) -> None:
         cost = estimate_cost_usd(model, usage.input_tokens, usage.output_tokens)
@@ -97,6 +110,23 @@ class TraceService:
                 user_id, session_id, self._clock.now()
             )
         return RunRecorder(self._db, self._clock, run_id)
+
+    async def resume_run(self, run_id: uuid.UUID) -> RunRecorder:
+        """Continue a run's trace from a later process, such as the saga in a worker."""
+        async with self._db.session_scope() as session:
+            seq = await TraceRepository(session).last_seq(run_id)
+        return RunRecorder(self._db, self._clock, run_id, seq)
+
+    async def settle_run(self, recorder: RunRecorder, outcome: str, reply: str) -> None:
+        """A run left as `verifying` gets its real outcome. Its model counts stay as they are."""
+        await recorder.event("outcome", name=outcome, data={"settled_by": "saga"})
+        try:
+            async with self._db.session_scope() as session:
+                await TraceRepository(session).finish_run(
+                    recorder.run_id, outcome=outcome, reply=reply, finished_at=self._clock.now()
+                )
+        except (SQLAlchemyError, OSError):
+            logger.exception("could not settle run %s", recorder.run_id)
 
     async def finish_run(
         self, recorder: RunRecorder, outcome: str, reason: str | None, reply: str

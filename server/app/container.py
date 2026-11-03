@@ -12,11 +12,15 @@ from app.core.config import Settings
 from app.core.database import Database
 from app.core.heartbeats import Heartbeats
 from app.core.locks import RedisTurnLock
+from app.domains.bookings.saga import BookingSaga
+from app.domains.bookings.service import BOOK_JOB, ApprovalService
+from app.domains.bookings.verification import BookingApprovalVerifier
 from app.domains.chat.service import ChatService
 from app.domains.gateway.client import ProviderClient
-from app.domains.gateway.service import ApprovalVerifier, DenyAllApprovals, ToolGateway
+from app.domains.gateway.service import ApprovalVerifier, ToolGateway
 from app.domains.jobs.broker import TaskiqJobPublisher
 from app.domains.jobs.service import JobHandler, JobPublisher, JobService
+from app.domains.notifications.service import NotificationService
 from app.domains.system.service import PING_JOB, SystemService, handle_ping
 from app.domains.tracing.service import TraceService
 from app.domains.workflow.service import WorkflowService
@@ -37,6 +41,11 @@ class Core:
     system: SystemService
     gateway: ToolGateway
     provider_client: ProviderClient
+    traces: TraceService
+    workflows: WorkflowService
+    notifications: NotificationService
+    approvals: ApprovalService
+    saga: BookingSaga
 
     async def close(self) -> None:
         await self.provider_client.close()
@@ -90,14 +99,45 @@ def build_core(
     )
     gateway = ToolGateway(
         provider_client,
-        # Until the approvals domain exists, nothing that needs approval can run.
-        approvals or DenyAllApprovals(),
+        approvals or BookingApprovalVerifier(db),
         settings.tool_retry_backoff_s,
     )
     system = SystemService(
         db, redis, heartbeats, jobs, gateway.is_provider_reachable, settings.model_is_configured
     )
-    return Core(settings, db, redis, clock, heartbeats, jobs, system, gateway, provider_client)
+    traces = TraceService(db, clock)
+    workflows = WorkflowService(db, clock)
+    notifications = NotificationService(db, clock)
+    approval_service = ApprovalService(db, clock, gateway, workflows, jobs, traces, notifications)
+    saga = BookingSaga(
+        db,
+        clock,
+        gateway,
+        approval_service,
+        workflows,
+        notifications,
+        traces,
+        jobs,
+        settings.job_lease_s,
+    )
+    jobs.register(BOOK_JOB, saga.run_job)
+    jobs.add_sweeper(saga.recover)
+    return Core(
+        settings,
+        db,
+        redis,
+        clock,
+        heartbeats,
+        jobs,
+        system,
+        gateway,
+        provider_client,
+        traces,
+        workflows,
+        notifications,
+        approval_service,
+        saga,
+    )
 
 
 def build_api_container(
@@ -112,13 +152,12 @@ def build_api_container(
     from app.domains.agent.runtime import AdkAgentRuntime
 
     settings = core.settings
-    traces = TraceService(core.db, core.clock)
-    workflows = WorkflowService(core.db, core.clock)
     runtime = AdkAgentRuntime(
         model=model or build_model(settings),
         session_service=session_service or DatabaseSessionService(db_url=settings.adk_database_url),
         gateway=core.gateway,
-        workflow=workflows,
+        workflow=core.workflows,
+        bookings=core.approvals,
         max_model_calls=settings.max_model_calls,
         max_tool_calls=settings.max_tool_calls,
         today=lambda: core.clock.now().astimezone(LOCAL_TZ).date(),
@@ -129,9 +168,10 @@ def build_api_container(
         turn_lock=RedisTurnLock(
             core.redis, ttl_s=settings.turn_lock_ttl_s, wait_s=settings.turn_lock_wait_s
         ),
-        traces=traces,
-        workflows=workflows,
+        traces=core.traces,
+        workflows=core.workflows,
+        bookings=core.approvals,
         run_deadline_s=settings.run_deadline_s,
         model_is_configured=settings.model_is_configured,
     )
-    return ApiContainer(core, chat, traces, broker)
+    return ApiContainer(core, chat, core.traces, broker)

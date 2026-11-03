@@ -6,7 +6,6 @@ Pure functions, so every rule can be tested against a fixed "today".
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
-from enum import StrEnum
 
 MAX_SEARCH_DAYS = 31
 
@@ -61,26 +60,6 @@ _ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _DAY_MONTH = re.compile(rf"^(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH})(?:\s+(\d{{4}}))?$")
 _MONTH_DAY = re.compile(rf"^({_MONTH})\s+(\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+(\d{{4}}))?$")
 
-_AFFIRMATIVE = re.compile(
-    r"^(yes|yep|yeah|yup|y|ok|okay|sure|correct|right|confirm|confirmed|perfect|fine|"
-    r"that'?s right|that works|sounds good|looks good|go ahead)\b"
-)
-_NEGATIVE = re.compile(
-    r"^(no|nope|nah|wrong|that'?s wrong|not (that|this|those|these|ok|okay|right|correct))\b"
-)
-_CONTRARY = re.compile(r"\b(but|no|not|instead|change|actually|wrong|except|however|different)\b")
-_HEDGE = re.compile(
-    r"\b(maybe|perhaps|probably|possibly|i guess|i think|i suppose|not sure|unsure|hmm+|"
-    r"kind of|sort of|dunno|don'?t know|no idea)\b"
-)
-
-
-class DateAnswer(StrEnum):
-    CONFIRMED = "confirmed"
-    REJECTED = "rejected"
-    UNCLEAR = "unclear"
-    OTHER = "other"
-
 
 @dataclass(frozen=True)
 class ResolvedDates:
@@ -90,7 +69,7 @@ class ResolvedDates:
 
     @property
     def shown_dates(self) -> tuple[str, ...]:
-        """What the user must see before they can confirm."""
+        """What the user must see, so a wrong reading is easy to spot."""
         if self.start == self.end:
             return (display(self.start),)
         return (display(self.start), display(self.end))
@@ -162,7 +141,8 @@ def _one_phrase(text: str, today: date) -> ResolvedDates | None:
         saturday = _next_weekday(today, 5)
         return _span("This weekend", saturday, saturday + timedelta(days=1))
     if text == "next weekend":
-        saturday = next_monday + timedelta(days=5)
+        # The coming one, never today. Anyone who means a later one gives the exact dates.
+        saturday = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
         return _span("Next weekend", saturday, saturday + timedelta(days=1))
 
     words = text.split()
@@ -213,36 +193,3 @@ def is_grounded(phrase: str, user_text: str) -> bool:
     words = [word.casefold() for word in re.findall(r"\w+", phrase)]
     meaningful = [word for word in words if word not in _FILLER]
     return bool(meaningful) and all(word in said for word in meaningful)
-
-
-def _normalized(message: str) -> str:
-    return re.sub(r"\s+", " ", message.strip().casefold())
-
-
-def read_answer(message: str, shown_dates: list[str], asked_alone: bool) -> DateAnswer:
-    """What this message says about the proposed dates. Code decides this, not the model.
-
-    A plain "yes" is clear only if the dates were the one question asked. After a reply with
-    another question in it, that "yes" could mean either, so it is unclear.
-    """
-    text = _normalized(message)
-    if _HEDGE.search(text):
-        return DateAnswer.UNCLEAR
-    if _NEGATIVE.match(text):
-        return DateAnswer.REJECTED
-    if _CONTRARY.search(text):
-        return DateAnswer.OTHER
-    if all(day in text for day in shown_dates):
-        return DateAnswer.CONFIRMED
-    if _AFFIRMATIVE.match(text):
-        return DateAnswer.CONFIRMED if asked_alone else DateAnswer.UNCLEAR
-    return DateAnswer.OTHER
-
-
-def date_question(label: str) -> str:
-    return f"Are these dates okay: {label}?"
-
-
-def is_asked_alone(reply: str, shown_dates: list[str]) -> bool:
-    """The reply shows the exact dates, and asks nothing else."""
-    return reply.count("?") == 1 and all(day in reply for day in shown_dates)

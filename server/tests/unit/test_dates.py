@@ -4,16 +4,7 @@ from datetime import date
 
 import pytest
 
-from app.domains.workflow.dates import (
-    DateAnswer,
-    date_question,
-    display,
-    is_asked_alone,
-    is_grounded,
-    problem_with,
-    read_answer,
-    resolve_phrase,
-)
+from app.domains.workflow.dates import display, is_grounded, problem_with, resolve_phrase
 
 TODAY = date(2026, 11, 3)
 
@@ -36,7 +27,7 @@ TODAY = date(2026, 11, 3)
         ("any day this week", "2026-11-03", "2026-11-08", "This week (03/11/2026 to 08/11/2026)"),
         ("next week", "2026-11-09", "2026-11-15", "Next week (09/11/2026 to 15/11/2026)"),
         ("this weekend", "2026-11-07", "2026-11-08", "This weekend (07/11/2026 to 08/11/2026)"),
-        ("next weekend", "2026-11-14", "2026-11-15", "Next weekend (14/11/2026 to 15/11/2026)"),
+        ("next weekend", "2026-11-07", "2026-11-08", "Next weekend (07/11/2026 to 08/11/2026)"),
     ],
 )
 def test_common_phrases(phrase: str, start: str, end: str, label: str) -> None:
@@ -64,6 +55,30 @@ def test_next_on_that_same_weekday_means_a_week_from_today() -> None:
 def test_todays_weekday_means_today() -> None:
     resolved = resolve_phrase("Tuesday", TODAY)
     assert resolved is not None and resolved.start == TODAY
+
+
+@pytest.mark.parametrize(
+    ("today", "saturday", "sunday"),
+    [
+        (date(2026, 11, 3), date(2026, 11, 7), date(2026, 11, 8)),  # Tuesday
+        (date(2026, 11, 6), date(2026, 11, 7), date(2026, 11, 8)),  # Friday
+        (date(2026, 11, 7), date(2026, 11, 14), date(2026, 11, 15)),  # Saturday: never today
+        (date(2026, 11, 8), date(2026, 11, 14), date(2026, 11, 15)),  # Sunday: never today
+    ],
+)
+def test_next_weekend_is_the_coming_one_and_never_today(
+    today: date, saturday: date, sunday: date
+) -> None:
+    resolved = resolve_phrase("next weekend", today)
+    assert resolved is not None
+    assert (resolved.start, resolved.end) == (saturday, sunday)
+
+
+def test_a_later_weekend_must_be_given_exactly() -> None:
+    assert resolve_phrase("the weekend after next", date(2026, 11, 3)) is None
+    exact = resolve_phrase("14 Nov to 15 Nov", date(2026, 11, 3))
+    assert exact is not None
+    assert (exact.start, exact.end) == (date(2026, 11, 14), date(2026, 11, 15))
 
 
 def test_weekend_on_a_sunday_is_only_today() -> None:
@@ -197,111 +212,3 @@ def test_very_long_range_is_a_problem() -> None:
 )
 def test_dates_must_come_from_the_users_own_words(phrase: str, said: str, expected: bool) -> None:
     assert is_grounded(phrase, said) is expected
-
-
-SHOWN = ["07/11/2026"]
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "yes",
-        "Yes.",
-        "YES!",
-        "yep",
-        "ok",
-        "okay",
-        "correct",
-        "that's right",
-        "sounds good",
-        "go ahead",
-        "Yes, and the budget is 900",
-        "yes please",
-        "07/11/2026",
-        "Saturday 07/11/2026 works",
-    ],
-)
-def test_clear_confirmations(message: str) -> None:
-    assert read_answer(message, SHOWN, asked_alone=True) == DateAnswer.CONFIRMED
-
-
-@pytest.mark.parametrize("message", ["yes", "ok", "sure", "correct", "sounds good"])
-def test_plain_yes_is_unclear_if_another_question_was_asked(message: str) -> None:
-    assert read_answer(message, SHOWN, asked_alone=False) == DateAnswer.UNCLEAR
-
-
-def test_repeating_the_date_is_clear_even_after_another_question() -> None:
-    assert read_answer("yes, 07/11/2026", SHOWN, asked_alone=False) == DateAnswer.CONFIRMED
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "ok I guess",
-        "yes I think so",
-        "maybe",
-        "probably",
-        "hmm",
-        "hmmm ok",
-        "not sure",
-        "I don't know",
-        "no idea",
-        "sort of",
-        "yeah maybe",
-    ],
-)
-def test_hedged_answers_are_unclear(message: str) -> None:
-    assert read_answer(message, SHOWN, asked_alone=True) == DateAnswer.UNCLEAR
-
-
-@pytest.mark.parametrize(
-    "message", ["no", "No, Sunday", "nope", "not that", "not that day", "wrong"]
-)
-def test_clear_rejections(message: str) -> None:
-    assert read_answer(message, SHOWN, asked_alone=True) == DateAnswer.REJECTED
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "yes but make it Sunday",
-        "ok actually Sunday",
-        "Sunday instead",
-        "sure, change it to Sunday",
-        "what about Sunday",
-        "yesterday",
-        "okayish",
-        "noon works",
-        "08/11/2026",
-        "",
-    ],
-)
-def test_anything_else_is_left_to_the_conversation(message: str) -> None:
-    assert read_answer(message, SHOWN, asked_alone=True) == DateAnswer.OTHER
-
-
-def test_range_needs_both_dates_to_confirm_by_repeating_them() -> None:
-    shown = ["03/11/2026", "08/11/2026"]
-    assert read_answer("03/11/2026", shown, asked_alone=False) == DateAnswer.OTHER
-    assert read_answer("03/11/2026 to 08/11/2026", shown, asked_alone=False) == (
-        DateAnswer.CONFIRMED
-    )
-
-
-@pytest.mark.parametrize(
-    ("reply", "expected"),
-    [
-        ("Are these dates okay: This Saturday (07/11/2026)?", True),
-        ("Thanks. What is your budget?", False),
-        ("Is this okay (07/11/2026)? And what is your budget?", False),
-        ("I will use 07/11/2026.", False),
-    ],
-)
-def test_asked_alone_means_the_dates_and_one_question(reply: str, expected: bool) -> None:
-    assert is_asked_alone(reply, SHOWN) is expected
-
-
-def test_the_question_uses_the_exact_words() -> None:
-    assert date_question("This Saturday (07/11/2026)") == (
-        "Are these dates okay: This Saturday (07/11/2026)?"
-    )

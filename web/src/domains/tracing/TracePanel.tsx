@@ -10,8 +10,24 @@ type TraceState =
   | { status: "loaded"; trace: RunTrace }
   | { status: "error"; message: string };
 
+const REFRESH_MS = 2000;
+
 function useRunTrace(runId: string | null): TraceState {
   const [state, setState] = useState<TraceState>({ status: "idle" });
+  const running = state.status === "loaded" && state.trace.outcome === "verifying";
+
+  // The saga keeps adding to a run after the reply, so follow it until it settles.
+  useEffect(() => {
+    if (!runId || !running) return;
+    const timer = setInterval(() => {
+      request<RunTrace>(`/runs/${runId}/trace`)
+        .then((trace) => setState({ status: "loaded", trace }))
+        .catch(() => {
+          // The next tick tries again.
+        });
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [runId, running]);
 
   useEffect(() => {
     if (!runId) {
@@ -70,6 +86,20 @@ function EventDetails({ event }: { event: TraceEvent }) {
         <div>
           <dt>Try again in</dt>
           <dd>{String(event.data.retry_after_s)} s</dd>
+        </div>
+      )}
+      {event.data.answer != null && (
+        <div>
+          <dt>Answer</dt>
+          <dd>
+            {String(event.data.answer)} ({String(event.data.source)})
+          </dd>
+        </div>
+      )}
+      {event.data.after_book_result != null && (
+        <div>
+          <dt>After book said</dt>
+          <dd>{String(event.data.after_book_result)}</dd>
         </div>
       )}
       {event.data.status != null && (

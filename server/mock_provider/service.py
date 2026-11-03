@@ -114,7 +114,7 @@ class MockProviderService:
                         name=provider.name,
                         service=provider.service,
                         area=request.area,
-                        price=provider.price,
+                        price=self._list_price(state, provider),
                         currency=CURRENCY,
                         rating=provider.rating,
                         review_count=provider.review_count,
@@ -128,11 +128,14 @@ class MockProviderService:
         provider = CATALOG.get(provider_id)
         if provider is None:
             raise _not_found("provider")
+        async with self._db.session_scope() as session:
+            state = await MockRepository(session).read_state(self._default_seed)
+            price = self._list_price(state, provider)
         return ProviderDetails(
             id=provider.id,
             name=provider.name,
             service=provider.service,
-            price=provider.price,
+            price=price,
             currency=CURRENCY,
             rating=provider.rating,
             review_count=provider.review_count,
@@ -200,14 +203,20 @@ class MockProviderService:
 
                 expires_at = now + timedelta(minutes=HOLD_MINUTES)
                 await repository.remove_expired_claim(provider_id, canonical, now)
+                # Asking again for your own held slot replaces the hold, with a fresh quote.
+                own = await repository.active_hold_for_slot(user_id, provider_id, canonical)
+                if own is not None and now < own.expires_at:
+                    own.status = "replaced"
+                    await repository.release_claim(provider_id, canonical)
                 await repository.add_claim(provider_id, canonical, "hold", expires_at)
+                list_price = self._list_price(state, provider)
                 hold = Hold(
                     id=f"hold-{uuid.uuid4().hex[:12]}",
                     user_id=user_id,
                     provider_id=provider_id,
                     slot=canonical,
-                    quoted_price=provider.price + self._quote_delta(state, provider_id),
-                    search_price=provider.price,
+                    quoted_price=list_price + self._quote_delta(state, provider_id),
+                    search_price=list_price,
                     status="active",
                     expires_at=expires_at,
                     created_at=now,
@@ -227,6 +236,10 @@ class MockProviderService:
             currency=CURRENCY,
             expires_at=hold.expires_at,
         )
+
+    def _list_price(self, state: MockState, provider: Provider) -> int:
+        prices = state.scenario.get("provider_prices") or {}
+        return int(prices.get(provider.id, provider.price))
 
     def _quote_delta(self, state: MockState, provider_id: str) -> int:
         deltas = state.scenario.get("quote_deltas")

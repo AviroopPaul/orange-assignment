@@ -269,11 +269,11 @@ describe("chat", () => {
     });
   });
 
-  it("says plainly that booking is not connected yet", () => {
+  it("says plainly what is not connected yet", () => {
     fakeApi(STATUS_OK);
     render(<App />);
     expect(
-      screen.getByText(/Holding, booking and memory are not connected yet/),
+      screen.getByText(/Cancelling, rescheduling and memory are not connected yet/),
     ).toBeInTheDocument();
   });
 
@@ -505,5 +505,238 @@ describe("status bar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run test job" }));
 
     expect(await screen.findByText("Test job failed: boom")).toBeInTheDocument();
+  });
+});
+
+const CARD = {
+  approval_id: "approval-1",
+  action: "book",
+  provider_name: "Sharma Plumbing",
+  service: "plumber",
+  slot: "2026-11-05T09:00:00+05:30",
+  slot_label: "Thu 05/11/2026, 09:00",
+  price: 1200,
+  currency: "INR",
+  notes: ["The quote is higher than the search price of ₹1,100."],
+  expires_at: "2026-11-03T10:00:00+00:00",
+  status: "pending",
+};
+
+const DECISION = {
+  status: "in_progress",
+  outcome: "verifying",
+  reply: "Your booking is in progress. It is not confirmed yet.",
+  run_id: "run-2",
+  session_id: "session-1",
+  approval: null,
+};
+
+describe("approval card", () => {
+  const withCard = {
+    ...STATUS_OK,
+    "POST /api/chat": reply("run-1", "Please confirm the card.", {
+      outcome: "awaiting_approval",
+      approval: CARD,
+    }),
+    "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+    "GET /api/runs/run-2/trace": () => ({ json: traceFor("run-2") }),
+  };
+
+  it("shows the exact details from the server", async () => {
+    fakeApi(withCard);
+    render(<App />);
+    await say("book it");
+
+    const card = await screen.findByRole("region", { name: "Confirm this booking" });
+    expect(within(card).getByText("Sharma Plumbing")).toBeInTheDocument();
+    expect(within(card).getByText("Thu 05/11/2026, 09:00")).toBeInTheDocument();
+    expect(within(card).getByText("₹1,200")).toBeInTheDocument();
+    expect(within(card).getByText(/higher than the search price/)).toBeInTheDocument();
+  });
+
+  it("confirms with a click, closes the card and reports progress honestly", async () => {
+    const calls = fakeApi({
+      ...withCard,
+      "POST /api/approvals/approval-1/confirm": () => ({ json: DECISION }),
+    });
+    render(<App />);
+    await say("book it");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText(/not confirmed yet/)).toBeInTheDocument();
+    const posted = calls.find((call) => call.key.endsWith("/confirm"));
+    expect(posted?.body).toEqual({ user_id: "demo-user" });
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+    expect(screen.getByText("This card is closed.")).toBeInTheDocument();
+  });
+
+  it("can say not now", async () => {
+    const calls = fakeApi({
+      ...withCard,
+      "POST /api/approvals/approval-1/reject": () => ({
+        json: { ...DECISION, status: "rejected", outcome: "needs_input", reply: "I did not book it." },
+      }),
+    });
+    render(<App />);
+    await say("book it");
+    await userEvent.click(await screen.findByRole("button", { name: "Not now" }));
+
+    expect(await screen.findByText("I did not book it.")).toBeInTheDocument();
+    expect(calls.some((call) => call.key.endsWith("/reject"))).toBe(true);
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+  });
+
+  it("closes a card when the next reply has none", async () => {
+    let turn = 0;
+    fakeApi({
+      ...withCard,
+      "POST /api/chat": () => {
+        turn += 1;
+        return turn === 1
+          ? { json: { run_id: "run-1", session_id: "s", outcome: "awaiting_approval", reason: null, reply: "Confirm?", approval: CARD } }
+          : { json: { run_id: "run-2", session_id: "s", outcome: "needs_input", reason: null, reply: "Which day instead?" } };
+      },
+    });
+    render(<App />);
+    await say("book it");
+    await screen.findByRole("button", { name: "Confirm" });
+    await say("change the day");
+
+    await screen.findByText("Which day instead?");
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+  });
+
+  it("shows the verified result when it arrives, with no new message from the user", async () => {
+    fakeApi({
+      ...withCard,
+      "POST /api/approvals/approval-1/confirm": () => ({ json: DECISION }),
+      "GET /api/notifications?user_id=demo-user&session_id=session-1&after=0": () => ({
+        json: {
+          notifications: [
+            {
+              id: 7,
+              kind: "booking_verified",
+              text: "Booked and verified with the provider.",
+              data: { run_id: "run-2" },
+              created_at: "2026-11-03T10:00:00+00:00",
+            },
+          ],
+        },
+      }),
+    });
+    render(<App />);
+    await say("book it");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(
+      await screen.findByText("Booked and verified with the provider.", {}, { timeout: 4000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a new card that arrives from the saga, and only that one can be answered", async () => {
+    fakeApi({
+      ...withCard,
+      "POST /api/approvals/approval-1/confirm": () => ({ json: DECISION }),
+      "GET /api/notifications?user_id=demo-user&session_id=session-1&after=0": () => ({
+        json: {
+          notifications: [
+            {
+              id: 8,
+              kind: "booking_price_changed",
+              text: "The price changed. Nothing was booked.",
+              data: { approval: { ...CARD, approval_id: "approval-2", price: 1700, notes: [] } },
+              created_at: "2026-11-03T10:00:00+00:00",
+            },
+          ],
+        },
+      }),
+    });
+    render(<App />);
+    await say("book it");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText("₹1,700", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Confirm" })).toHaveLength(1);
+  });
+});
+
+describe("after a reload", () => {
+  const stored = (messages: unknown[], extra: Record<string, unknown> = {}) =>
+    localStorage.setItem(
+      "errand.chat.v1",
+      JSON.stringify({ sessionId: "session-1", messages, ...extra }),
+    );
+  const currentRoute = "GET /api/bookings/current?user_id=demo-user&session_id=session-1";
+
+  it("shows an open card this page never received", async () => {
+    stored([{ id: "1", role: "agent", text: "Please confirm the card.", runId: "run-1" }]);
+    fakeApi({
+      ...STATUS_OK,
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+      [currentRoute]: () => ({ json: { approval: CARD, attempt_open: false } }),
+    });
+    render(<App />);
+
+    const card = await screen.findByRole("region", { name: "Confirm this booking" });
+    expect(within(card).getByText("Sharma Plumbing")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Confirm" })).toBeEnabled();
+  });
+
+  it("does not show a card twice", async () => {
+    stored([
+      { id: "1", role: "agent", text: "Confirm?", runId: "run-1", approval: CARD, approvalOpen: true },
+    ]);
+    const calls = fakeApi({
+      ...STATUS_OK,
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+      [currentRoute]: () => ({ json: { approval: CARD, attempt_open: false } }),
+    });
+    render(<App />);
+
+    await waitFor(() => expect(calls.some((call) => call.key === currentRoute)).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getAllByRole("button", { name: "Confirm" })).toHaveLength(1);
+  });
+
+  it("closes a stored card the server no longer has open", async () => {
+    stored([
+      { id: "1", role: "agent", text: "Confirm?", runId: "run-1", approval: CARD, approvalOpen: true },
+    ]);
+    fakeApi({
+      ...STATUS_OK,
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+      [currentRoute]: () => ({ json: { approval: null, attempt_open: false } }),
+    });
+    render(<App />);
+
+    expect(await screen.findByText("This card is closed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+  });
+
+  it("picks up the result of a booking that was running", async () => {
+    stored([{ id: "1", role: "agent", text: "In progress.", runId: "run-1" }]);
+    fakeApi({
+      ...STATUS_OK,
+      "GET /api/runs/run-1/trace": () => ({ json: traceFor("run-1") }),
+      [currentRoute]: () => ({ json: { approval: null, attempt_open: true } }),
+      "GET /api/notifications?user_id=demo-user&session_id=session-1&after=0": () => ({
+        json: {
+          notifications: [
+            {
+              id: 9,
+              kind: "booking_verified",
+              text: "Booked and verified with the provider.",
+              data: {},
+              created_at: "2026-11-03T10:00:00+00:00",
+            },
+          ],
+        },
+      }),
+    });
+    render(<App />);
+
+    expect(
+      await screen.findByText("Booked and verified with the provider.", {}, { timeout: 4000 }),
+    ).toBeInTheDocument();
   });
 });

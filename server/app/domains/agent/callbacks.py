@@ -9,10 +9,18 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
+from google.genai import types
 
+from app.domains.bookings.matching import claims_side_effect
+from app.domains.bookings.service import ApprovalService
 from app.domains.gateway.service import CallContext, ToolBudgetExhausted, ToolGateway
 from app.domains.tracing.service import ModelUsage, RunRecorder
 from app.domains.workflow.service import WorkflowService
+
+FALSE_CLAIM_REPLY = (
+    "I can't confirm that yet. I only say something is booked or changed "
+    "once the provider has verified it."
+)
 
 
 @dataclass
@@ -24,7 +32,10 @@ class TurnTelemetry:
     model_tool_names: frozenset[str]
     workflow: WorkflowService
     session_id: str
+    bookings: ApprovalService
     call_started_at: float = 0.0
+    # A statement about a booking is fair once the source of truth was read in this turn.
+    read_bookings: bool = False
 
 
 current_turn: ContextVar[TurnTelemetry | None] = ContextVar("current_turn", default=None)
@@ -61,7 +72,26 @@ async def after_model(
         ),
         {"requested_tools": requested_tools, "finish_reason": str(llm_response.finish_reason)},
     )
-    return None
+    if requested_tools:
+        return None
+    return await _block_false_claim(turn, parts, llm_response)
+
+
+async def _block_false_claim(
+    turn: TurnTelemetry, parts: list[types.Part] | None, llm_response: LlmResponse
+) -> LlmResponse | None:
+    """Success text comes from a template after verification. The model may not write its own."""
+    text = "".join(part.text for part in parts or [] if part.text and not part.thought)
+    if not claims_side_effect(text) or turn.read_bookings:
+        return None
+    if await turn.bookings.has_verified_booking(turn.tool_context.user_id, turn.session_id):
+        return None
+    await turn.recorder.event("false_claim_blocked", data={"text": text[:500]})
+    return LlmResponse(
+        content=types.Content(role="model", parts=[types.Part(text=FALSE_CLAIM_REPLY)]),
+        usage_metadata=llm_response.usage_metadata,
+        finish_reason=llm_response.finish_reason,
+    )
 
 
 async def on_model_error(

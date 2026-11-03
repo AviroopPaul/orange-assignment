@@ -12,6 +12,7 @@ from app.domains.gateway.schemas import (
     GetProviderArgs,
     HoldSlotArgs,
     ListBookingsArgs,
+    ProposeBookingArgs,
     RescheduleArgs,
     ResolveDatesArgs,
     SearchProvidersArgs,
@@ -52,6 +53,10 @@ class ToolSpec:
 _SPECS = (
     ToolSpec("update_request", UpdateRequestArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True),
     ToolSpec("resolve_dates", ResolveDatesArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True),
+    # Takes a hold and shows the user a card. Nothing else follows without their approval.
+    ToolSpec(
+        "propose_booking", ProposeBookingArgs, frozenset({Caller.MODEL}), NO_RETRY, local=True
+    ),
     ToolSpec("search_providers", SearchProvidersArgs, EVERYONE, READ_RETRY),
     ToolSpec("get_provider", GetProviderArgs, EVERYONE, READ_RETRY),
     ToolSpec("list_bookings", ListBookingsArgs, EVERYONE, READ_RETRY),

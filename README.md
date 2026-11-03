@@ -62,8 +62,8 @@ curl -s localhost:8000/runs/RUN_ID/trace
 | `mock-provider` | Stands in for an outside provider: the 8 tools from the brief, on port 8100 |
 | `redis` | Job stream and turn lock. It never holds the truth |
 | `migrate` | One-shot job: Alembic upgrade and ADK tables |
-| `api` | FastAPI: chat turns (ADK inside), traces, health |
-| `worker` | Runs jobs. Does not load ADK |
+| `api` | FastAPI: chat turns (ADK inside), approvals, notifications, traces, health |
+| `worker` | Runs jobs, including the booking saga. Does not load ADK |
 | `scheduler` | Enqueues the sweep every 15 s. Run exactly one copy |
 | `web` | nginx serving the React app on port 3000, and proxying `/api` to `api` |
 

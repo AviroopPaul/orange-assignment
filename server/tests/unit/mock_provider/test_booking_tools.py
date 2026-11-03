@@ -545,3 +545,40 @@ async def test_provider_cancel_frees_the_slot(mock: Mock) -> None:
         "hold_slot", user=OTHER_USER, provider_id=booking["provider_id"], slot=booking["slot"]
     )
     assert again.status_code == 200
+
+
+async def test_asking_again_for_your_own_held_slot_replaces_the_hold(mock: Mock) -> None:
+    slot = mock.free_slots("plm-01")[0]
+    first = await mock.hold("plm-01", slot)
+    second = await mock.hold("plm-01", slot)
+    assert second["hold_id"] != first["hold_id"]
+
+    old = await mock.tool("book", hold_id=first["hold_id"], idempotency_key="old-hold")
+    assert old.status_code == 409
+    assert old.json()["error"] == "hold_not_active"
+
+
+async def test_a_replaced_hold_leaves_the_slot_closed_to_others(mock: Mock) -> None:
+    slot = mock.free_slots("plm-01")[0]
+    await mock.hold("plm-01", slot)
+    await mock.hold("plm-01", slot)
+    other = await mock.tool("hold_slot", user=OTHER_USER, provider_id="plm-01", slot=slot)
+    assert other.status_code == 409
+
+
+async def test_a_booked_slot_cannot_be_held_again_by_the_same_user(mock: Mock) -> None:
+    await mock.scenario(book_outcomes=["success"])
+    slot = mock.free_slots("plm-01")[0]
+    hold = await mock.hold("plm-01", slot)
+    await mock.tool("book", hold_id=hold["hold_id"], idempotency_key="k")
+    again = await mock.tool("hold_slot", provider_id="plm-01", slot=slot)
+    assert again.status_code == 409
+
+
+async def test_a_scenario_can_change_a_list_price(mock: Mock) -> None:
+    await mock.scenario(provider_prices={"plm-01": 7777})
+    details = await mock.tool("get_provider", provider_id="plm-01")
+    assert details.json()["price"] == 7777
+    hold = await mock.hold("plm-01")
+    assert hold["search_price"] == 7777
+    assert hold["quoted_price"] == 7777

@@ -65,7 +65,7 @@ class ApprovalVerifier(Protocol):
 
 
 class DenyAllApprovals:
-    """Used until the approvals domain exists: every side effect that needs approval is refused."""
+    """Every side effect that needs approval is refused. For tests of everything else."""
 
     async def is_valid(
         self, token: str | None, tool: str, args: dict[str, Any], user_id: str
