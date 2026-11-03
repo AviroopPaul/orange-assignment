@@ -16,7 +16,7 @@ Last updated: 3 Nov 2026.
 | Area | Done | Partial | Not started | Total |
 |---|---|---|---|---|
 | Functional requirements | 14 | 0 | 0 | 14 |
-| Non-functional requirements | 18 | 2 | 0 | 20 |
+| Non-functional requirements | 20 | 0 | 0 | 20 |
 | Eval scenarios | 38 | 0 | 0 | 38 |
 | Eval invariants | 8 | 0 | 0 | 8 |
 | Deliverables | 1 | 2 | 4 | 7 |
@@ -122,8 +122,8 @@ To see a price change after approval, send `{"provider_prices":{"plm-01":2000}}`
 | N16 | Safe concurrency | Done | Redis turn lock, `StaleSessionError` backstop, job and attempt leases with fencing, and workflow row locks with a version check, tested on PostgreSQL. Only `api` writes ADK sessions. A click needs no turn lock, because it only touches PostgreSQL through a conditional update | |
 | N17 | Reproducible offline evals | Done | Scripted model through the real ADK loop. Seeded mock with scripted outcomes. All processes share a fake clock, starting on 1 Jan 2035. `evals` runs on an internal network, and a preflight check stops the run if Gemini can be reached. The brief allows a scripted model. See "Changes from the blueprint" for recorded replies | |
 | N18 | Survive Redis or PostgreSQL loss | Done | Automated on the full stack with bookings in flight. Redis wipe (E31). Redis down: clear reply, and the job waits in the outbox until Redis returns (E34). PostgreSQL down: a clear 503, nothing consumed and no call sent (E35). The outages are real cut connections, through a proxy | |
-| N19 | One-command local run | Partial | `make up` from clean, with ordered health checks, including `mock-provider`. Migrations safe to repeat. A new CI job runs `make up` on a clean machine and checks `/readyz` and the UI | The job has not run yet. It runs on the next PR |
-| N20 | Secrets stay out | Partial | Key comes from the environment at run time and is hidden in `repr`. Trace arguments and results are masked and bounded. `scripts/scan_secrets.py` scans tracked files, ignore files and an image's history and env, and prints only where a match is. It finds nothing in the repo, and tests plant keys to prove it can | The image scan runs in the same new CI job, which has not run yet |
+| N19 | One-command local run | Done | `make up` from clean, with ordered health checks, including `mock-provider`. Migrations safe to repeat. A CI job runs `make up` on a clean machine with no key, then checks `/readyz` and the UI. It passed on PR 11 | |
+| N20 | Secrets stay out | Done | Key comes from the environment at run time and is hidden in `repr`. Trace arguments and results are masked and bounded. `scripts/scan_secrets.py` scans tracked files, ignore files and an image's history and env, and prints only where a match is. Tests plant keys to prove it can find them. The CI job scanned the repo and the built image, and passed on PR 11 | |
 
 ## Components
 
@@ -347,7 +347,8 @@ The blueprint on claude.ai is version 4. These are not in it yet.
 - **Proof:** one full run passed 38 of 38 with no invariant violations. Tests plant a violation of each invariant, and the first real runs caught two real bugs.
 - **Found:** a cancelled write left a gap in a trace (BUGS.md 17), and a killed `api` left its run open for good (BUGS.md 18). Both are fixed. The false-claim guard's own reply also read as a claim, so its wording changed.
 - **Rate limit:** `gemini-3-flash-preview` allows 5 requests a minute on the free tier, confirmed from a real 429. That is about 2 chat turns a minute, so a demo should go slowly. Its daily limit is still not known.
-- **Not tested:** `use_past_provider` with live Gemini. The new CI jobs have not run yet. The deliberate-break audit of this step is still held for the end of the build.
+- **Proof on PR 11:** clean start and secret scan passed in CI. Locally, 1,016 unit tests, 34 integration tests and 38 evals passed.
+- **Not tested:** `use_past_provider` with live Gemini. The deliberate-break audit of this step is still held for the end of the build.
 
 ### 3 Nov 2026: Model is now `gemini-3-flash-preview`
 
