@@ -583,6 +583,41 @@ class ApprovalService:
             booking_id=attempt.booking_id if attempt else None,
         )
 
+    # What the provider poll compares with
+
+    async def watched_users(self) -> list[str]:
+        async with self._db.session_scope() as session:
+            return list(await BookingRepository(session).users_with_bookings())
+
+    async def bookings_on_record(self, user_id: str) -> dict[str, BookingAttempt]:
+        """Each booking we made or changed, with the attempt that first brought it to us."""
+        async with self._db.session_scope() as session:
+            attempts = await BookingRepository(session).attempts_with_bookings(user_id)
+        found: dict[str, BookingAttempt] = {}
+        for attempt in attempts:
+            if attempt.booking_id is not None:
+                found.setdefault(attempt.booking_id, attempt)
+        return found
+
+    async def change_is_running(self, booking_id: str) -> bool:
+        async with self._db.session_scope() as session:
+            attempt = await BookingRepository(session).open_attempt_for_booking(booking_id)
+        return attempt is not None
+
+    async def close_cards_for_booking_in(
+        self, session: AsyncSession, booking_id: str
+    ) -> tuple[list[str], list[tuple[WorkflowState, WorkflowState]]]:
+        """A card to cancel or move a booking the provider has cancelled can no longer apply."""
+        repository = BookingRepository(session)
+        closed, moves = [], []
+        for approval in await repository.pending_for_booking(booking_id):
+            await repository.close_approval(
+                approval.id, ApprovalStatus.VOIDED, "provider_cancelled", self._clock.now()
+            )
+            closed.append(str(approval.id))
+            moves += await self._workflows.leave_card_in(session, approval.workflow_id)
+        return closed, moves
+
     async def prompt_note(self, user_id: str, session_id: str) -> str:
         """The model's view of a booking. Workers never write to its session, so it reads this."""
         view = await self.view(user_id, session_id)
@@ -607,6 +642,11 @@ class ApprovalService:
         latest = await self._notifications.latest_texts(user_id, session_id, limit=2)
         lines.extend(f"Latest update, written by the system: {text}" for text in latest)
         return "\n".join(lines) or "No booking activity in this chat."
+
+    async def updates_with_times(
+        self, user_id: str, session_id: str, limit: int
+    ) -> list[tuple[str, datetime]]:
+        return await self._notifications.latest_with_times(user_id, session_id, limit)
 
     async def latest_updates(self, user_id: str, session_id: str, limit: int) -> list[str]:
         """What happened to bookings in this chat, in the system's own words."""

@@ -1,12 +1,7 @@
 import type { MemoryItem } from "../memory/types";
 
 export type Outcome =
-  | "done"
-  | "needs_input"
-  | "awaiting_approval"
-  | "verifying"
-  | "limit_reached"
-  | "tool_failed";
+  "done" | "needs_input" | "awaiting_approval" | "verifying" | "limit_reached" | "tool_failed";
 
 export interface ApprovalCard {
   approval_id: string;
@@ -39,9 +34,16 @@ export interface BookingState {
 
 export interface NotificationItem {
   id: number;
+  session_id: string;
   kind: string;
   text: string;
-  data: { run_id?: string; approval?: ApprovalCard };
+  data: {
+    run_id?: string;
+    approval?: ApprovalCard;
+    // The user must hear this even in another chat, such as a provider's own cancel.
+    proactive?: boolean;
+    closed_cards?: string[];
+  };
   created_at: string;
 }
 
@@ -58,6 +60,8 @@ export interface ChatResponse {
 export type MessageRole = "user" | "agent" | "error";
 
 export interface ChatMessage {
+  // News about another chat. The user can open that chat to answer it.
+  otherSession?: string;
   id: string;
   role: MessageRole;
   text: string;

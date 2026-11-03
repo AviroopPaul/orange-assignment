@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 RUN_JOB_TASK = "jobs.run"
 SWEEP_TASK = "jobs.sweep"
+PROVIDER_POLL_TASK = "jobs.provider_poll"
 
 
 class ResilientStreamBroker(RedisStreamBroker):

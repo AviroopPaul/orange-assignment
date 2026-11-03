@@ -1,3 +1,6 @@
+import { Brain, CircleCheck } from "lucide-react";
+
+import { Button } from "../../components/ui";
 import type { MemoryItem } from "./types";
 
 interface MemoryChatNoteProps {
@@ -15,6 +18,7 @@ export function MemoryChatNote({ saved, questions, busy, onAnswer }: MemoryChatN
         <ul className="memory-saved" aria-label="Saved to memory">
           {saved.map((item) => (
             <li key={item.id}>
+              <CircleCheck size={14} aria-hidden="true" />
               Remembered {item.key.replaceAll("_", " ")}: {item.value}
             </li>
           ))}
@@ -22,25 +26,23 @@ export function MemoryChatNote({ saved, questions, busy, onAnswer }: MemoryChatN
       )}
       {questions.map((item) => (
         <section key={item.id} className="memory-question" aria-label="Remember this?">
-          <h3>Remember this?</h3>
+          <header>
+            <Brain size={15} aria-hidden="true" />
+            <h3>Remember this?</h3>
+          </header>
           <p>{item.value}</p>
           <div className="approval-actions">
-            <button
-              type="button"
-              className="button primary"
+            <Button size="sm" disabled={busy} onClick={() => onAnswer(item, false)}>
+              Don't remember
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
               disabled={busy}
               onClick={() => onAnswer(item, true)}
             >
               Remember
-            </button>
-            <button
-              type="button"
-              className="button quiet"
-              disabled={busy}
-              onClick={() => onAnswer(item, false)}
-            >
-              Don't remember
-            </button>
+            </Button>
           </div>
         </section>
       ))}

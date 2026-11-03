@@ -33,6 +33,7 @@ source_modules =
     app.domains.jobs
     app.domains.memory
     app.domains.notifications
+    app.domains.proactive
     app.domains.system
     app.domains.tracing
     app.domains.workflow
@@ -50,6 +51,7 @@ forbidden_modules =
     app.domains.chat
     app.domains.memory
     app.domains.notifications
+    app.domains.proactive
     app.domains.system
     app.domains.jobs
     app.domains.workflow
@@ -65,6 +67,7 @@ forbidden_modules =
     app.domains.gateway
     app.domains.memory
     app.domains.notifications
+    app.domains.proactive
     app.domains.system
     app.domains.tracing
 
@@ -74,6 +77,16 @@ type = forbidden
 source_modules =
     app.domains.bookings
     app.domains.notifications
+forbidden_modules =
+    app.domains.agent
+    app.domains.chat
+    app.domains.memory
+    app.domains.proactive
+
+[importlinter:contract:proactive-is-below-the-model]
+name = proactive detection runs in the worker, so it never reaches the model
+type = forbidden
+source_modules = app.domains.proactive
 forbidden_modules =
     app.domains.agent
     app.domains.chat

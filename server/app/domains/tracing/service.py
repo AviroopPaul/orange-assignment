@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.core.clock import Clock
 from app.core.database import Database
 from app.core.redaction import scrub_text, scrub_value
+from app.domains.tracing.jsonl import JsonlTraceFiles
 from app.domains.tracing.models import TraceEvent
 from app.domains.tracing.pricing import estimate_cost_usd
 from app.domains.tracing.repository import TraceRepository
@@ -34,11 +35,19 @@ class ModelUsage:
 class RunRecorder:
     """Writes one run's events, each in its own short transaction."""
 
-    def __init__(self, db: Database, clock: Clock, run_id: uuid.UUID, seq: int = 0) -> None:
+    def __init__(
+        self,
+        db: Database,
+        clock: Clock,
+        run_id: uuid.UUID,
+        seq: int = 0,
+        files: JsonlTraceFiles | None = None,
+    ) -> None:
         self._db = db
         self._clock = clock
         self.run_id = run_id
         self._seq = seq
+        self._files = files
         self.model_calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -72,6 +81,21 @@ class RunRecorder:
             try:
                 async with self._db.session_scope() as session:
                     await TraceRepository(session).add_event(event)
+                if self._files is not None:
+                    self._files.append(
+                        self.run_id,
+                        {
+                            "seq": event.seq,
+                            "at": event.created_at.isoformat(),
+                            "kind": kind,
+                            "name": name,
+                            "data": event.data,
+                            "latency_ms": latency_ms,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "estimated_cost_usd": estimated_cost_usd,
+                        },
+                    )
                 return
             except IntegrityError:
                 self._seq = await self._last_seq()
@@ -102,26 +126,39 @@ class RunRecorder:
 
 
 class TraceService:
-    def __init__(self, db: Database, clock: Clock) -> None:
+    def __init__(self, db: Database, clock: Clock, files: JsonlTraceFiles | None = None) -> None:
         self._db = db
         self._clock = clock
+        self._files = files
 
     async def start_run(self, user_id: str, session_id: str) -> RunRecorder:
         async with self._db.session_scope() as session:
             run_id = await TraceRepository(session).create_run(
                 user_id, session_id, self._clock.now()
             )
-        return RunRecorder(self._db, self._clock, run_id)
+        if self._files is not None:
+            self._files.append(
+                run_id,
+                {
+                    "seq": 0,
+                    "at": self._clock.now().isoformat(),
+                    "kind": "run_started",
+                    "data": {"user_id": user_id, "session_id": session_id},
+                },
+            )
+        return RunRecorder(self._db, self._clock, run_id, files=self._files)
 
     async def resume_run(self, run_id: uuid.UUID) -> RunRecorder:
         """Continue a run's trace from a later process, such as the saga in a worker."""
         async with self._db.session_scope() as session:
             seq = await TraceRepository(session).last_seq(run_id)
-        return RunRecorder(self._db, self._clock, run_id, seq)
+        return RunRecorder(self._db, self._clock, run_id, seq, self._files)
 
-    async def settle_run(self, recorder: RunRecorder, outcome: str, reply: str) -> None:
-        """A run left as `verifying` gets its real outcome. Its model counts stay as they are."""
-        await recorder.event("outcome", name=outcome, data={"settled_by": "saga"})
+    async def settle_run(
+        self, recorder: RunRecorder, outcome: str, reply: str, settled_by: str = "saga"
+    ) -> None:
+        """A run left open gets its real outcome. Its model counts stay as they are."""
+        await recorder.event("outcome", name=outcome, data={"settled_by": settled_by})
         try:
             async with self._db.session_scope() as session:
                 await TraceRepository(session).finish_run(
@@ -159,6 +196,8 @@ class TraceService:
                     run.reply = scrub_text(run.reply, pattern)
                 for event in await repository.list_events(run.id):
                     event.data = scrub_value(event.data, pattern)
+                if self._files is not None:
+                    self._files.scrub(run.id, pattern)
 
     async def get_trace(self, run_id: uuid.UUID) -> RunTraceRead:
         async with self._db.session_scope() as session:

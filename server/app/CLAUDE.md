@@ -11,7 +11,7 @@ app/
   healthcheck.py  Compose health check for worker and scheduler
   container.py    composition root (constructor injection)
   web.py          FastAPI dependencies
-  core/           config, clock, database, turn lock, heartbeats
+  core/           config, clock, database, turn lock, heartbeats, wake-ups
   domains/
     chat/         turn controller: limits, lock, outcomes, replies
     agent/        ADK adapter, Gemini config, scripted model, prompt, callbacks, model tools
@@ -21,6 +21,7 @@ app/
     bookings/     approvals, the approval hash, reading a yes or no, and the booking saga
     notifications/ what the system tells a user outside a chat turn
     memory/       facts across chats, the redactable chat, the context assembler and its log
+    proactive/    finds bookings the provider cancelled, tells the user, offers replacements
     tracing/      runs, trace events, cost
     system/       health, status, ping job
 ```
@@ -74,6 +75,13 @@ Enforced by `tests/unit/test_architecture.py` and `.importlinter`.
 - **Read the chat from `turn_view`, not from ADK.** ChatService writes each message and reply. Only the current run comes from ADK.
 - **A fact counts only if it is explicit or confirmed.** The filter is in SQL. `propose_memory` cannot trust a fact unless the user's own sentence states it, and the model has no confirm tool. A guess is asked about in the chat, and `answer_from_message` reads a whole-message yes or no before the model runs, after any open booking card.
 - **Removing a fact has two steps.** `_scrub_now` cleans what the next model call reads. `finish_scrub` runs after the reply is stored, because the reply may quote the fact, and only then wipes the value. ADK sessions are deleted under the turn lock, never mid-run.
+
+- **A provider cancel never holds a slot.** A hold lasts only 10 minutes and the user may be away. Rebooking goes through the normal card. The poll only reads the provider.
+- **One `booking_disruptions` row per booking is what makes one notice.** Write the notice in the same transaction as the row.
+- **Background work takes the turn lock with `wait_s=0`,** and comes back on the next poll. It must never delay a chat turn.
+- **Redis wake-ups carry no news.** The row in PostgreSQL is the news, and each reader also looks on a timer. Publish only after commit, which `add_in` arranges.
+- **Workers cannot write to the chat.** The model reads their news because `agent/context.py` merges notifications into its history.
+- **Anything that scrubs traces must also scrub the JSONL files.** `TraceService.scrub_user` does both.
 
 ## Not built yet
 

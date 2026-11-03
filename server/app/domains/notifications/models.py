@@ -10,7 +10,10 @@ from app.core.database import Base, BigIntPk, JsonColumn, UtcDateTime
 
 class Notification(Base):
     __tablename__ = "notifications"
-    __table_args__ = (Index("ix_notifications_user_session", "user_id", "session_id", "id"),)
+    __table_args__ = (
+        Index("ix_notifications_user_session", "user_id", "session_id", "id"),
+        Index("ix_notifications_user", "user_id", "id"),
+    )
 
     # The id also serves as the reader's cursor.
     id: Mapped[int] = mapped_column(BigIntPk, primary_key=True, autoincrement=True)

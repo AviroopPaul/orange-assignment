@@ -11,10 +11,14 @@ export function fakeApi(routes: Record<string, Handler>) {
     calls.push({ key, body });
     const handler = routes[key];
     if (!handler) {
-      return new Response(JSON.stringify({ detail: "not found" }), { status: 404 });
+      return new Response(JSON.stringify({ detail: "not found" }), {
+        status: 404,
+      });
     }
     const result = await handler(body);
-    return new Response(JSON.stringify(result.json), { status: result.status ?? 200 });
+    return new Response(JSON.stringify(result.json), {
+      status: result.status ?? 200,
+    });
   });
   vi.stubGlobal("fetch", fetchMock);
   return calls;
@@ -70,4 +74,44 @@ export function traceFor(runId: string, overrides: Record<string, unknown> = {})
     ],
     ...overrides,
   };
+}
+
+/** jsdom has no EventSource. This stands in for the HTTP stream, and only that. */
+export class FakeEventSource {
+  static readonly CLOSED = 2;
+  static instances: FakeEventSource[] = [];
+  readonly url: string;
+  readyState = 1;
+  onerror: (() => void) | null = null;
+  private listeners: ((event: { data: string }) => void)[] = [];
+
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(_: string, listener: (event: { data: string }) => void) {
+    this.listeners.push(listener);
+  }
+
+  close() {
+    this.readyState = FakeEventSource.CLOSED;
+  }
+
+  push(item: unknown) {
+    for (const listener of this.listeners) listener({ data: JSON.stringify(item) });
+  }
+}
+
+/** What the server does: send one stored notification down the open stream. */
+export function pushNotification(item: Record<string, unknown>) {
+  const open = FakeEventSource.instances.filter((source) => source.readyState !== 2);
+  for (const source of open) {
+    source.push({
+      session_id: "session-1",
+      data: {},
+      created_at: "2026-11-03T10:00:00+00:00",
+      ...item,
+    });
+  }
 }

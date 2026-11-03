@@ -9,6 +9,7 @@ import copy
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from math import ceil
 from typing import Any
 
@@ -22,6 +23,7 @@ TOOL_RESULT_FLOOR_CHARS = 400
 SUMMARY_QUOTES = 6
 SUMMARY_QUOTE_CHARS = 80
 UNCONFIRMED = "[unconfirmed]"
+_NO_TIME = datetime.min.replace(tzinfo=UTC)
 
 
 class ContextOverBudget(Exception):
@@ -32,6 +34,12 @@ class ContextOverBudget(Exception):
 class Turn:
     role: str
     text: str
+    at: datetime | None = None
+
+
+def with_updates(turns: list[Turn], updates: list[Turn]) -> list[Turn]:
+    """The chat as the user saw it. The system's own news appears in it, in time order."""
+    return sorted([*turns, *updates], key=lambda turn: turn.at or _NO_TIME)
 
 
 @dataclass(frozen=True)

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     google_api_key: SecretStr | None = None
     model_mode: Literal["live", "scripted"] = "live"
-    model_name: str = "gemini-3.5-flash-lite"
+    model_name: str = "gemini-2.5-flash"
     model_request_timeout_s: float = 30
     model_attempts: int = 2
     model_rate_limit_max_wait_s: float = 30
@@ -38,8 +38,13 @@ class Settings(BaseSettings):
     broker_idle_timeout_s: float = 60
     broker_queue_name: str = "errand.jobs"
     sweep_interval_s: int = 15
+    provider_poll_interval_s: int = 20
     heartbeat_interval_s: float = 10
     heartbeat_ttl_s: int = 45
+
+    # Unset means no trace files. PostgreSQL always has the trace.
+    trace_dir: str | None = None
+    process_name: str = "app"
 
     @field_validator("google_api_key", mode="before")
     @classmethod

@@ -1,3 +1,6 @@
+import { CalendarCheck, CalendarClock, CalendarX, Check, Info, Lock } from "lucide-react";
+
+import { Button } from "../../components/ui";
 import type { ApprovalCard } from "./types";
 
 function formatPrice(card: ApprovalCard): string {
@@ -19,6 +22,8 @@ const HEADINGS: Record<string, string> = {
   reschedule: "Move this booking?",
 };
 
+const ICONS = { book: CalendarCheck, cancel: CalendarX, reschedule: CalendarClock };
+
 interface ApprovalCardViewProps {
   card: ApprovalCard;
   open: boolean;
@@ -29,9 +34,15 @@ interface ApprovalCardViewProps {
 /** Every value here comes from the server's approval row, never from the model's reply. */
 export function ApprovalCardView({ card, open, busy, onAnswer }: ApprovalCardViewProps) {
   const heading = HEADINGS[card.action] ?? HEADINGS.book;
+  const Icon = ICONS[card.action as keyof typeof ICONS] ?? CalendarCheck;
   return (
     <section className={`approval ${open ? "open" : "closed"}`} aria-label={heading}>
-      <h3>{heading}</h3>
+      <header className="approval-head">
+        <span className="approval-icon" aria-hidden="true">
+          <Icon size={16} />
+        </span>
+        <h3>{heading}</h3>
+      </header>
       <dl>
         <div>
           <dt>Provider</dt>
@@ -58,30 +69,29 @@ export function ApprovalCardView({ card, open, busy, onAnswer }: ApprovalCardVie
       </dl>
       {card.notes.map((note) => (
         <p key={note} className="approval-note">
+          <Info size={14} aria-hidden="true" />
           {note}
         </p>
       ))}
       {open ? (
         <div className="approval-actions">
-          <button
-            type="button"
-            className="button primary"
+          <Button disabled={busy} onClick={() => onAnswer(card, "reject")}>
+            Not now
+          </Button>
+          <Button
+            variant="primary"
+            icon={Check}
             disabled={busy}
             onClick={() => onAnswer(card, "confirm")}
           >
             Confirm
-          </button>
-          <button
-            type="button"
-            className="button quiet"
-            disabled={busy}
-            onClick={() => onAnswer(card, "reject")}
-          >
-            Not now
-          </button>
+          </Button>
         </div>
       ) : (
-        <p className="approval-closed">This card is closed.</p>
+        <p className="approval-closed">
+          <Lock size={13} aria-hidden="true" />
+          This card is closed.
+        </p>
       )}
     </section>
   );

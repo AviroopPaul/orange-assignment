@@ -1,5 +1,5 @@
 import { request } from "../../lib/api";
-import type { ApprovalDecision, BookingState, ChatResponse, NotificationItem } from "./types";
+import type { ApprovalDecision, BookingState, ChatResponse } from "./types";
 
 export function sendMessage(
   userId: string,
@@ -32,16 +32,7 @@ export function answerApproval(
   });
 }
 
-export async function fetchNotifications(
-  userId: string,
-  sessionId: string,
-  after: number,
-): Promise<NotificationItem[]> {
-  const query = new URLSearchParams({
-    user_id: userId,
-    session_id: sessionId,
-    after: String(after),
-  });
-  const result = await request<{ notifications: NotificationItem[] }>(`/notifications?${query}`);
-  return result.notifications;
+export function eventsUrl(userId: string, after: number): string {
+  const query = new URLSearchParams({ user_id: userId, after: String(after) });
+  return `/api/events?${query}`;
 }

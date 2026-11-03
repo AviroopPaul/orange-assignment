@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 broker = build_broker(settings)
-register_tasks(broker, settings.sweep_interval_s)
+register_tasks(broker, settings.sweep_interval_s, settings.provider_poll_interval_s)
 
 
 def worker_heartbeat_name() -> str:
@@ -37,6 +37,7 @@ async def on_worker_startup(state: TaskiqState) -> None:
     core = build_core(settings, broker=broker)
     state.core = core
     state.jobs = core.jobs
+    state.provider_poll = core.proactive.poll
     state.heartbeats = core.heartbeats
     state.heartbeat_task = asyncio.create_task(_beat_forever(core))
 

@@ -106,7 +106,18 @@ Candidates for the "three real bugs" deliverable. Each one really happened, and 
 - **Why tests missed it:** Scripted models only say what they are told, so nothing tested a model answering from a cut list. It took a person asking about a day past the cut.
 - **Regression tests:** `test_a_providers_times_on_one_day`, `test_each_provider_has_its_own_times`, `test_a_refused_slot_says_what_is_really_open` and `test_result_names_the_open_days_and_no_times` in `server/tests/unit/test_workflow.py`. The rule against naming times rests on the prompt, checked live only.
 
+## 15. "Thanks" after a verified booking got "please confirm the card"
+
+- **What broke:** Found in a live run of this step. The user clicked Confirm, the provider verified the booking, and the user said "thanks". The reply was "Please confirm the booking using the card on screen".
+- **Why:** Workers cannot write to the chat, so the model's history ended with its own "please confirm". The verified news was only one line in the booking status, and the model followed the history.
+- **Fix:** The system's news now goes into the chat history the model reads, in time order. It is what the user saw on screen too.
+- **Why tests missed it:** Scripted models say what they are told, so a test cannot show a real model trusting its history over the status line.
+- **Regression test:** `test_the_systems_news_sits_in_the_chat_in_time_order` in `server/tests/unit/test_proactive.py`. That the model now answers correctly was checked live, once.
+
 ## Smaller
+
+**The event stream said "no news" as soon as it opened.** Redis answers a subscribe with a message, and the client reports that as nothing. So the first wait ended at once. Users would have seen no difference, because it only sent a keepalive early, but the listener's answer was wrong. Regression test: `test_a_wake_up_delivers_at_once_over_real_redis` in `server/tests/integration/test_proactive.py`.
+
 
 **A stated fact was marked as a guess, and the other fact in the message was lost.** From testing the UI: "I live in Indiranagar and go to office on Mon, Wed and Fri 9-5", then "remember that". The model correctly wrote "goes to office", in the third person. The quote check wanted every word of the value in the user's sentence, so "goes" against "go" made it unconfirmed. The model also made only one call, so the area was never proposed. The check now ignores word endings and filler words, and the prompt asks for one call per fact. Regression tests: `test_a_words_ending_does_not_make_a_stated_fact_a_guess` and `test_two_facts_in_one_message_are_both_saved_and_shown_once` in `server/tests/unit/test_memory.py`. The one-call part rests on the prompt, checked live.
 
